@@ -1,4 +1,7 @@
 class SqlExecutor
+  BOOLEAN_TRUE = 'TRUE'
+  BOOLEAN_FALSE = 'FALSE'
+  
   def execute(parsed_sql)
     if parsed_sql[:error]
       return { error: parsed_sql[:error] }
@@ -24,9 +27,9 @@ class SqlExecutor
     
     converted_values = values.map do |value|
       case value
-      when 'TRUE'
+      when BOOLEAN_TRUE
         true
-      when 'FALSE'
+      when BOOLEAN_FALSE
         false
       else
         value
