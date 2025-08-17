@@ -1,15 +1,19 @@
 class SqlParser
+  BOOLEAN_TRUE = 'TRUE'
+  BOOLEAN_FALSE = 'FALSE'
+  PARSING_ERROR = 'parsing_error'
+  
   def parse(sql)
     sql = sql.strip
     
     if sql.empty?
-      return { error: 'parsing_error' }
+      return { error: PARSING_ERROR }
     end
     
     if sql.upcase.start_with?('SELECT')
       parse_select(sql)
     else
-      { error: 'parsing_error' }
+      { error: PARSING_ERROR }
     end
   end
   
@@ -19,12 +23,12 @@ class SqlParser
     match = sql.match(/\ASELECT\s*(.*?)(?:\s*;\s*\z|\z)/i)
     
     if match.nil?
-      return { error: 'parsing_error' }
+      return { error: PARSING_ERROR }
     end
     
     remainder = sql[match.end(0)..-1].strip
     if !remainder.empty?
-      return { error: 'parsing_error' }
+      return { error: PARSING_ERROR }
     end
     
     select_list = match[1].strip
@@ -38,25 +42,25 @@ class SqlParser
     
     parts = split_select_list(select_list)
     
-    parts.each_with_index do |part, index|
-      part = part.strip
+    parts.each do |part|
+      parsed_value = parse_select_value(part.strip)
+      return parsed_value if parsed_value[:error]
       
-      if part.match(/\A(-?\d+)(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
-        value = $1.to_i
-        column_name = $2
-        values << value
-        columns << (column_name || nil)
-      elsif part.match(/\A(TRUE|FALSE)(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
-        value = $1.upcase
-        column_name = $2
-        values << value
-        columns << (column_name || nil)
-      else
-        return { error: 'parsing_error' }
-      end
+      values << parsed_value[:value]
+      columns << parsed_value[:column]
     end
     
     { type: :select, values: values, columns: columns }
+  end
+  
+  def parse_select_value(expression)
+    if match = expression.match(/\A(-?\d+)(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
+      { value: match[1].to_i, column: match[2] }
+    elsif match = expression.match(/\A(#{BOOLEAN_TRUE}|#{BOOLEAN_FALSE})(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
+      { value: match[1].upcase, column: match[2] }
+    else
+      { error: PARSING_ERROR }
+    end
   end
   
   def split_select_list(select_list)
