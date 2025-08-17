@@ -1,84 +1,109 @@
+require_relative 'tokenizer'
+require_relative 'sql_error'
+
 class Parser
+  def initialize
+    @tokenizer = Tokenizer.new
+  end
+  
   def parse(sql)
-    sql = sql.strip
+    tokens = @tokenizer.tokenize(sql)
+    return { error: :parsing_error } if tokens.empty?
     
-    # Check for unexpected characters after semicolon
-    if sql.include?(';')
-      parts = sql.split(';', 2)
-      if parts[1] && !parts[1].strip.empty?
-        return { error: 'parsing_error' }
-      end
-      sql = parts[0].strip
+    # Check for trailing content after semicolon
+    semicolon_index = tokens.find_index { |t| t.type == :semicolon }
+    if semicolon_index && semicolon_index < tokens.length - 1
+      return { error: :parsing_error }
     end
     
-    # Handle SELECT statements
-    if sql.upcase.start_with?('SELECT')
-      parse_select(sql)
+    # Remove trailing semicolon if present
+    tokens.pop if tokens.last&.type == :semicolon
+    
+    # Check for unknown tokens
+    if tokens.any? { |t| t.type == :unknown }
+      return { error: :parsing_error }
+    end
+    
+    return { error: :parsing_error } if tokens.empty?
+    
+    case tokens.first.value
+    when 'SELECT'
+      parse_select(tokens)
     else
-      { error: 'parsing_error' }
+      { error: :parsing_error }
     end
   end
   
   private
   
-  def parse_select(sql)
-    # Remove SELECT keyword
-    rest = sql[6..-1].strip
+  def parse_select(tokens)
+    tokens.shift # Remove SELECT
     
     # Handle empty SELECT
-    if rest.empty? || rest == ';'
+    if tokens.empty?
       return { type: :select, values: [], columns: [] }
     end
     
     values = []
     columns = []
     
-    # Parse comma-separated values
-    parts = rest.split(',').map(&:strip)
-    
-    parts.each do |part|
-      # Remove trailing semicolon if present
-      part = part.chomp(';').strip
+    # Parse comma-separated expressions
+    while !tokens.empty?
+      # Parse value
+      value, column = parse_select_item(tokens)
+      return { error: :parsing_error } if value.nil?
       
-      # Check for AS clause
-      if part =~ /^(.+)\s+AS\s+(.+)$/i
-        value_part = $1.strip
-        column_name = $2.strip
-        
-        # Validate column name (must not start with a number)
-        if column_name =~ /^\d/
-          return { error: 'parsing_error' }
-        end
-        
-        value = parse_value(value_part)
-        return { error: 'parsing_error' } if value.nil?
-        
-        values << value
-        columns << column_name
-      else
-        value = parse_value(part)
-        return { error: 'parsing_error' } if value.nil?
-        
-        values << value
-        columns << nil
-      end
+      values << value
+      columns << column
+      
+      # Check for comma
+      break unless tokens.first&.type == :comma
+      tokens.shift # Remove comma
+      
+      # Error if nothing after comma
+      return { error: :parsing_error } if tokens.empty?
     end
     
     { type: :select, values: values, columns: columns }
   end
   
-  def parse_value(str)
-    return nil if str.empty?
+  def parse_select_item(tokens)
+    return [nil, nil] if tokens.empty?
     
-    # Check for boolean values
-    return true if str.upcase == 'TRUE'
-    return false if str.upcase == 'FALSE'
+    # Parse the value
+    value = parse_value(tokens)
+    return [nil, nil] if value.nil?
     
-    # Check for integers (including negative)
-    if str =~ /^-?\d+$/
-      return str.to_i
+    # Check for AS clause
+    if tokens.first&.value == 'AS'
+      tokens.shift # Remove AS
+      
+      # Get column name
+      return [nil, nil] if tokens.empty?
+      
+      name_token = tokens.shift
+      return [nil, nil] unless name_token.type == :identifier
+      
+      # Column names cannot start with a digit
+      return [nil, nil] if name_token.value =~ /^\d/
+      
+      [value, name_token.value]
+    else
+      [value, nil]
     end
+  end
+  
+  def parse_value(tokens)
+    return nil if tokens.empty?
     
-    nil
+    token = tokens.shift
+    
+    case token.type
+    when :integer, :boolean
+      token.value
+    else
+      tokens.unshift(token) # Put it back
+      nil
+    end
   end
 end
