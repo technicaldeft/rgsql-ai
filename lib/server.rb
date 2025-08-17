@@ -36,25 +36,10 @@ class Server
     else
       formatted = {
         status: 'ok',
-        rows: result[:rows].map { |row| format_row(row) }
+        rows: result[:rows]
       }
       formatted[:column_names] = result[:columns] if result[:columns]
       formatted.to_json
-    end
-  end
-  
-  def format_row(row)
-    row.map { |value| format_value(value) }
-  end
-  
-  def format_value(value)
-    case value
-    when Integer
-      value
-    when String
-      value
-    else
-      value
     end
   end
 end
