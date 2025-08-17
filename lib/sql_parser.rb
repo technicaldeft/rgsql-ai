@@ -10,8 +10,18 @@ class SqlParser
       return { error: PARSING_ERROR }
     end
     
-    if sql.upcase.start_with?('SELECT')
+    first_word = sql.match(/\A([A-Z]+)/i)
+    return { error: PARSING_ERROR } unless first_word
+    
+    case first_word[1].upcase
+    when 'SELECT'
       parse_select(sql)
+    when 'CREATE'
+      parse_create_table(sql)
+    when 'DROP'
+      parse_drop_table(sql)
+    when 'INSERT'
+      parse_insert(sql)
     else
       { error: PARSING_ERROR }
     end
@@ -20,6 +30,21 @@ class SqlParser
   private
   
   def parse_select(sql)
+    # Check for SELECT with FROM clause first
+    if sql.match(/\bFROM\b/i)
+      match = sql.match(/\ASELECT\s+(.*?)\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;?\s*\z/i)
+      return { error: PARSING_ERROR } unless match
+      
+      select_list = match[1].strip
+      table_name = match[2]
+      
+      column_names = parse_column_names(select_list)
+      return column_names if column_names.is_a?(Hash) && column_names[:error]
+      
+      return { type: :select_from, table_name: table_name, columns: column_names }
+    end
+    
+    # Original SELECT without FROM
     match = sql.match(/\ASELECT\s*(.*?)(?:\s*;\s*\z|\z)/i)
     
     if match.nil?
@@ -33,24 +58,41 @@ class SqlParser
     
     select_list = match[1].strip
     
-    if select_list.empty?
-      return { type: :select, values: [], columns: [] }
-    end
-    
     values = []
     columns = []
     
-    parts = split_select_list(select_list)
-    
-    parts.each do |part|
-      parsed_value = parse_select_value(part.strip)
-      return parsed_value if parsed_value[:error]
+    if !select_list.empty?
+      parts = split_select_list(select_list)
       
-      values << parsed_value[:value]
-      columns << parsed_value[:column]
+      parts.each do |part|
+        parsed_value = parse_select_value(part.strip)
+        return parsed_value if parsed_value[:error]
+        
+        values << parsed_value[:value]
+        columns << parsed_value[:column]
+      end
     end
     
     { type: :select, values: values, columns: columns }
+  end
+  
+  def parse_column_names(select_list)
+    return [] if select_list.empty?
+    
+    parts = split_select_list(select_list)
+    column_names = []
+    
+    parts.each do |part|
+      part = part.strip
+      
+      if part.match(/\A([a-zA-Z_][a-zA-Z0-9_]*)\z/)
+        column_names << part
+      else
+        return { error: PARSING_ERROR }
+      end
+    end
+    
+    column_names
   end
   
   def parse_select_value(expression)
@@ -64,6 +106,8 @@ class SqlParser
   end
   
   def split_select_list(select_list)
+    return [] if select_list.empty?
+    
     parts = []
     current = ""
     depth = 0
@@ -81,5 +125,112 @@ class SqlParser
     
     parts << current unless current.empty?
     parts
+  end
+  
+  def parse_create_table(sql)
+    match = sql.match(/\ACREATE\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*;?\s*\z/i)
+    
+    return { error: PARSING_ERROR } unless match
+    
+    table_name = match[1]
+    columns_str = match[2]
+    
+    columns = parse_column_definitions(columns_str)
+    return columns if columns.is_a?(Hash) && columns[:error]
+    
+    { type: :create_table, table_name: table_name, columns: columns }
+  end
+  
+  def parse_column_definitions(columns_str)
+    column_parts = split_column_list(columns_str)
+    columns = []
+    
+    column_parts.each do |part|
+      part = part.strip
+      match = part.match(/\A([a-zA-Z_][a-zA-Z0-9_]*)\s+(INTEGER|BOOLEAN)\z/i)
+      
+      return { error: PARSING_ERROR } unless match
+      
+      columns << { name: match[1], type: match[2].upcase }
+    end
+    
+    columns
+  end
+  
+  def split_column_list(columns_str)
+    split_select_list(columns_str)
+  end
+  
+  def parse_drop_table(sql)
+    if match = sql.match(/\ADROP\s+TABLE\s+IF\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;?\s*\z/i)
+      { type: :drop_table, table_name: match[1], if_exists: true }
+    elsif match = sql.match(/\ADROP\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;?\s*\z/i)
+      { type: :drop_table, table_name: match[1], if_exists: false }
+    else
+      { error: PARSING_ERROR }
+    end
+  end
+  
+  def parse_insert(sql)
+    # Handle multiple value sets: VALUES (1, 2), (3, 4)
+    match = sql.match(/\AINSERT\s+INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+VALUES\s*(.*)\s*;?\s*\z/i)
+    
+    return { error: PARSING_ERROR } unless match
+    
+    table_name = match[1]
+    values_clause = match[2].strip
+    
+    # Extract all value sets - handle nested parentheses properly
+    value_sets = []
+    current_set = ""
+    depth = 0
+    in_set = false
+    
+    values_clause.chars.each do |char|
+      if char == '(' && depth == 0
+        in_set = true
+        depth = 1
+        current_set = ""
+      elsif char == '(' && in_set
+        depth += 1
+        current_set += char
+      elsif char == ')' && depth == 1
+        values = parse_value_list(current_set)
+        return values if values.is_a?(Hash) && values[:error]
+        value_sets << values
+        in_set = false
+        depth = 0
+      elsif char == ')' && in_set
+        depth -= 1
+        current_set += char
+      elsif in_set
+        current_set += char
+      end
+    end
+    
+    return { error: PARSING_ERROR } if value_sets.empty?
+    
+    { type: :insert_multiple, table_name: table_name, value_sets: value_sets }
+  end
+  
+  def parse_value_list(values_str)
+    return [] if values_str.strip.empty?
+    
+    parts = split_select_list(values_str)
+    values = []
+    
+    parts.each do |part|
+      part = part.strip
+      
+      if part.match(/\A-?\d+\z/)
+        values << part.to_i
+      elsif part.match(/\A(TRUE|FALSE)\z/i)
+        values << part.upcase
+      else
+        return { error: PARSING_ERROR }
+      end
+    end
+    
+    values
   end
 end

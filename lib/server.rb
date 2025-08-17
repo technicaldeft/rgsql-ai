@@ -31,8 +31,14 @@ class Server
   def format_response(result)
     if result[:error]
       { status: 'error', error_type: result[:error] }.to_json
+    elsif result[:status]
+      { status: result[:status] }.to_json
+    elsif result[:rows].nil?
+      { status: 'ok' }.to_json
     elsif result[:rows].empty?
-      { status: 'ok', rows: [] }.to_json
+      response = { status: 'ok', rows: [] }
+      response[:column_names] = result[:columns] if result[:columns]
+      response.to_json
     else
       formatted = {
         status: 'ok',
