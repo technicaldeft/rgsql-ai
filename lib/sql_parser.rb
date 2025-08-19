@@ -3,6 +3,10 @@ require_relative 'boolean_converter'
 class SqlParser
   PARSING_ERROR = 'parsing_error'
   IDENTIFIER_PATTERN = /[a-zA-Z_][a-zA-Z0-9_]*/
+  RESERVED_KEYWORDS = %w[
+    SELECT FROM CREATE TABLE DROP INSERT INTO VALUES
+    INTEGER BOOLEAN AS IF EXISTS
+  ].freeze
   
   def parse(sql)
     sql = sql.strip
@@ -30,10 +34,14 @@ class SqlParser
   
   private
   
+  def is_reserved_keyword?(name)
+    RESERVED_KEYWORDS.include?(name.upcase)
+  end
+  
   def parse_select(sql)
     # Check for SELECT with FROM clause first
     if sql.match(/\bFROM\b/i)
-      match = sql.match(/\ASELECT\s+(.*?)\s+FROM\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
+      match = sql.match(/\ASELECT\s+(.*?)\s+FROM\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/im)
       return { error: PARSING_ERROR } unless match
       
       select_list = match[1].strip
@@ -46,7 +54,7 @@ class SqlParser
     end
     
     # Original SELECT without FROM
-    match = sql.match(/\ASELECT\s*(.*?)(?:\s*;\s*\z|\z)/i)
+    match = sql.match(/\ASELECT\s*(.*?)(?:\s*;\s*\z|\z)/im)
     
     if match.nil?
       return { error: PARSING_ERROR }
@@ -66,7 +74,7 @@ class SqlParser
       parts = split_select_list(select_list)
       
       parts.each do |part|
-        parsed_value = parse_select_value(part.strip)
+        parsed_value = parse_select_value(part)
         return parsed_value if parsed_value[:error]
         
         values << parsed_value[:value]
@@ -86,8 +94,9 @@ class SqlParser
     parts.each do |part|
       part = part.strip
       
-      if part.match(/\A(#{IDENTIFIER_PATTERN})\z/)
-        column_names << part
+      # Allow column names with optional AS alias
+      if match = part.match(/\A(#{IDENTIFIER_PATTERN})(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
+        column_names << match[1]
       else
         return { error: PARSING_ERROR }
       end
@@ -115,7 +124,7 @@ class SqlParser
     
     select_list.chars.each do |char|
       if char == ',' && depth == 0
-        parts << current
+        parts << current.strip
         current = ""
       else
         current += char
@@ -124,17 +133,20 @@ class SqlParser
       end
     end
     
-    parts << current unless current.empty?
+    parts << current.strip unless current.strip.empty?
     parts
   end
   
   def parse_create_table(sql)
-    match = sql.match(/\ACREATE\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*\((.*?)\)\s*;?\s*\z/i)
+    match = sql.match(/\ACREATE\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*\((.*?)\)\s*;?\s*\z/im)
     
     return { error: PARSING_ERROR } unless match
     
     table_name = match[1]
     columns_str = match[2]
+    
+    # Check if table name is a reserved keyword
+    return { error: PARSING_ERROR } if is_reserved_keyword?(table_name)
     
     columns = parse_column_definitions(columns_str)
     return columns if columns.is_a?(Hash) && columns[:error]
@@ -152,7 +164,11 @@ class SqlParser
       
       return { error: PARSING_ERROR } unless match
       
-      columns << { name: match[1], type: match[2].upcase }
+      column_name = match[1]
+      # Check if column name is a reserved keyword
+      return { error: PARSING_ERROR } if is_reserved_keyword?(column_name)
+      
+      columns << { name: column_name, type: match[2].upcase }
     end
     
     columns
@@ -174,7 +190,7 @@ class SqlParser
   
   def parse_insert(sql)
     # Handle multiple value sets: VALUES (1, 2), (3, 4)
-    match = sql.match(/\AINSERT\s+INTO\s+(#{IDENTIFIER_PATTERN})\s+VALUES\s*(.*)\s*;?\s*\z/i)
+    match = sql.match(/\AINSERT\s+INTO\s+(#{IDENTIFIER_PATTERN})\s+VALUES\s*(.*)\s*;?\s*\z/im)
     
     return { error: PARSING_ERROR } unless match
     
