@@ -29,6 +29,21 @@ class ExpressionParser
   TOKEN_MOD = :mod
   TOKEN_AS = :as
   
+  # Operator symbols for AST
+  OP_PLUS = :plus
+  OP_MINUS = :minus
+  OP_STAR = :star
+  OP_SLASH = :slash
+  OP_LT = :lt
+  OP_GT = :gt
+  OP_LTE = :lte
+  OP_GTE = :gte
+  OP_EQUAL = :equal
+  OP_NOT_EQUAL = :not_equal
+  OP_AND = :and
+  OP_OR = :or
+  OP_NOT = :not
+  
   def initialize
     @tokens = []
     @current = 0
@@ -155,7 +170,7 @@ class ExpressionParser
     while match(TOKEN_OR)
       right = parse_and_expression
       return right if right[:error]
-      expr = { type: :binary_op, operator: :or, left: expr, right: right }
+      expr = { type: :binary_op, operator: OP_OR, left: expr, right: right }
     end
     
     expr
@@ -168,7 +183,7 @@ class ExpressionParser
     while match(TOKEN_AND)
       right = parse_comparison
       return right if right[:error]
-      expr = { type: :binary_op, operator: :and, left: expr, right: right }
+      expr = { type: :binary_op, operator: OP_AND, left: expr, right: right }
     end
     
     expr
@@ -181,27 +196,27 @@ class ExpressionParser
     if match(TOKEN_LT)
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: :lt, left: expr, right: right }
+      return { type: :binary_op, operator: OP_LT, left: expr, right: right }
     elsif match(TOKEN_GT)
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: :gt, left: expr, right: right }
+      return { type: :binary_op, operator: OP_GT, left: expr, right: right }
     elsif match(TOKEN_LTE)
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: :lte, left: expr, right: right }
+      return { type: :binary_op, operator: OP_LTE, left: expr, right: right }
     elsif match(TOKEN_GTE)
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: :gte, left: expr, right: right }
+      return { type: :binary_op, operator: OP_GTE, left: expr, right: right }
     elsif match(TOKEN_EQUAL)
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: :equal, left: expr, right: right }
+      return { type: :binary_op, operator: OP_EQUAL, left: expr, right: right }
     elsif match(TOKEN_NOT_EQUAL)
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: :not_equal, left: expr, right: right }
+      return { type: :binary_op, operator: OP_NOT_EQUAL, left: expr, right: right }
     end
     
     expr
@@ -215,11 +230,11 @@ class ExpressionParser
       if match(TOKEN_PLUS)
         right = parse_multiplication
         return right if right[:error]
-        expr = { type: :binary_op, operator: :plus, left: expr, right: right }
+        expr = { type: :binary_op, operator: OP_PLUS, left: expr, right: right }
       elsif match(TOKEN_MINUS)
         right = parse_multiplication
         return right if right[:error]
-        expr = { type: :binary_op, operator: :minus, left: expr, right: right }
+        expr = { type: :binary_op, operator: OP_MINUS, left: expr, right: right }
       else
         break
       end
@@ -236,11 +251,11 @@ class ExpressionParser
       if match(TOKEN_STAR)
         right = parse_unary
         return right if right[:error]
-        expr = { type: :binary_op, operator: :star, left: expr, right: right }
+        expr = { type: :binary_op, operator: OP_STAR, left: expr, right: right }
       elsif match(TOKEN_SLASH)
         right = parse_unary
         return right if right[:error]
-        expr = { type: :binary_op, operator: :slash, left: expr, right: right }
+        expr = { type: :binary_op, operator: OP_SLASH, left: expr, right: right }
       else
         break
       end
@@ -253,11 +268,11 @@ class ExpressionParser
     if match(TOKEN_NOT)
       expr = parse_unary
       return expr if expr[:error]
-      return { type: :unary_op, operator: :not, operand: expr }
+      return { type: :unary_op, operator: OP_NOT, operand: expr }
     elsif match(TOKEN_MINUS)
       expr = parse_unary
       return expr if expr[:error]
-      return { type: :unary_op, operator: :minus, operand: expr }
+      return { type: :unary_op, operator: OP_MINUS, operand: expr }
     end
     
     parse_primary
