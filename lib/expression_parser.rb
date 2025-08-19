@@ -5,6 +5,30 @@ class ExpressionParser
   
   Token = Struct.new(:type, :value)
   
+  # Token types
+  TOKEN_LPAREN = :lparen
+  TOKEN_RPAREN = :rparen
+  TOKEN_COMMA = :comma
+  TOKEN_PLUS = :plus
+  TOKEN_MINUS = :minus
+  TOKEN_STAR = :star
+  TOKEN_SLASH = :slash
+  TOKEN_LT = :lt
+  TOKEN_LTE = :lte
+  TOKEN_GT = :gt
+  TOKEN_GTE = :gte
+  TOKEN_EQUAL = :equal
+  TOKEN_NOT_EQUAL = :not_equal
+  TOKEN_INTEGER = :integer
+  TOKEN_BOOLEAN = :boolean
+  TOKEN_IDENTIFIER = :identifier
+  TOKEN_NOT = :not
+  TOKEN_AND = :and
+  TOKEN_OR = :or
+  TOKEN_ABS = :abs
+  TOKEN_MOD = :mod
+  TOKEN_AS = :as
+  
   def initialize
     @tokens = []
     @current = 0
@@ -39,54 +63,54 @@ class ExpressionParser
       when ' ', "\t", "\n", "\r"
         i += 1
       when '('
-        tokens << Token.new(:lparen, '(')
+        tokens << Token.new(TOKEN_LPAREN, '(')
         i += 1
       when ')'
-        tokens << Token.new(:rparen, ')')
+        tokens << Token.new(TOKEN_RPAREN, ')')
         i += 1
       when ','
-        tokens << Token.new(:comma, ',')
+        tokens << Token.new(TOKEN_COMMA, ',')
         i += 1
       when '+'
-        tokens << Token.new(:plus, '+')
+        tokens << Token.new(TOKEN_PLUS, '+')
         i += 1
       when '-'
-        tokens << Token.new(:minus, '-')
+        tokens << Token.new(TOKEN_MINUS, '-')
         i += 1
       when '*'
-        tokens << Token.new(:star, '*')
+        tokens << Token.new(TOKEN_STAR, '*')
         i += 1
       when '/'
-        tokens << Token.new(:slash, '/')
+        tokens << Token.new(TOKEN_SLASH, '/')
         i += 1
       when '<'
         if i + 1 < expression.length && expression[i + 1] == '='
-          tokens << Token.new(:lte, '<=')
+          tokens << Token.new(TOKEN_LTE, '<=')
           i += 2
         elsif i + 1 < expression.length && expression[i + 1] == '>'
-          tokens << Token.new(:not_equal, '<>')
+          tokens << Token.new(TOKEN_NOT_EQUAL, '<>')
           i += 2
         else
-          tokens << Token.new(:lt, '<')
+          tokens << Token.new(TOKEN_LT, '<')
           i += 1
         end
       when '>'
         if i + 1 < expression.length && expression[i + 1] == '='
-          tokens << Token.new(:gte, '>=')
+          tokens << Token.new(TOKEN_GTE, '>=')
           i += 2
         else
-          tokens << Token.new(:gt, '>')
+          tokens << Token.new(TOKEN_GT, '>')
           i += 1
         end
       when '='
-        tokens << Token.new(:equal, '=')
+        tokens << Token.new(TOKEN_EQUAL, '=')
         i += 1
       when /[0-9]/
         j = i
         while j < expression.length && expression[j] =~ /[0-9]/
           j += 1
         end
-        tokens << Token.new(:integer, expression[i...j].to_i)
+        tokens << Token.new(TOKEN_INTEGER, expression[i...j].to_i)
         i = j
       when /[a-zA-Z]/
         j = i
@@ -97,23 +121,23 @@ class ExpressionParser
         
         case word.upcase
         when 'TRUE'
-          tokens << Token.new(:boolean, true)
+          tokens << Token.new(TOKEN_BOOLEAN, true)
         when 'FALSE'
-          tokens << Token.new(:boolean, false)
+          tokens << Token.new(TOKEN_BOOLEAN, false)
         when 'NOT'
-          tokens << Token.new(:not, 'NOT')
+          tokens << Token.new(TOKEN_NOT, 'NOT')
         when 'AND'
-          tokens << Token.new(:and, 'AND')
+          tokens << Token.new(TOKEN_AND, 'AND')
         when 'OR'
-          tokens << Token.new(:or, 'OR')
+          tokens << Token.new(TOKEN_OR, 'OR')
         when 'ABS'
-          tokens << Token.new(:abs, 'ABS')
+          tokens << Token.new(TOKEN_ABS, 'ABS')
         when 'MOD'
-          tokens << Token.new(:mod, 'MOD')
+          tokens << Token.new(TOKEN_MOD, 'MOD')
         when 'AS'
-          tokens << Token.new(:as, 'AS')
+          tokens << Token.new(TOKEN_AS, 'AS')
         else
-          tokens << Token.new(:identifier, word)
+          tokens << Token.new(TOKEN_IDENTIFIER, word)
         end
         i = j
       else
@@ -128,7 +152,7 @@ class ExpressionParser
     expr = parse_and_expression
     return expr if expr[:error]
     
-    while match(:or)
+    while match(TOKEN_OR)
       right = parse_and_expression
       return right if right[:error]
       expr = { type: :binary_op, operator: :or, left: expr, right: right }
@@ -141,7 +165,7 @@ class ExpressionParser
     expr = parse_comparison
     return expr if expr[:error]
     
-    while match(:and)
+    while match(TOKEN_AND)
       right = parse_comparison
       return right if right[:error]
       expr = { type: :binary_op, operator: :and, left: expr, right: right }
@@ -154,27 +178,27 @@ class ExpressionParser
     expr = parse_addition
     return expr if expr[:error]
     
-    if match(:lt)
+    if match(TOKEN_LT)
       right = parse_addition
       return right if right[:error]
       return { type: :binary_op, operator: :lt, left: expr, right: right }
-    elsif match(:gt)
+    elsif match(TOKEN_GT)
       right = parse_addition
       return right if right[:error]
       return { type: :binary_op, operator: :gt, left: expr, right: right }
-    elsif match(:lte)
+    elsif match(TOKEN_LTE)
       right = parse_addition
       return right if right[:error]
       return { type: :binary_op, operator: :lte, left: expr, right: right }
-    elsif match(:gte)
+    elsif match(TOKEN_GTE)
       right = parse_addition
       return right if right[:error]
       return { type: :binary_op, operator: :gte, left: expr, right: right }
-    elsif match(:equal)
+    elsif match(TOKEN_EQUAL)
       right = parse_addition
       return right if right[:error]
       return { type: :binary_op, operator: :equal, left: expr, right: right }
-    elsif match(:not_equal)
+    elsif match(TOKEN_NOT_EQUAL)
       right = parse_addition
       return right if right[:error]
       return { type: :binary_op, operator: :not_equal, left: expr, right: right }
@@ -188,11 +212,11 @@ class ExpressionParser
     return expr if expr[:error]
     
     while true
-      if match(:plus)
+      if match(TOKEN_PLUS)
         right = parse_multiplication
         return right if right[:error]
         expr = { type: :binary_op, operator: :plus, left: expr, right: right }
-      elsif match(:minus)
+      elsif match(TOKEN_MINUS)
         right = parse_multiplication
         return right if right[:error]
         expr = { type: :binary_op, operator: :minus, left: expr, right: right }
@@ -209,11 +233,11 @@ class ExpressionParser
     return expr if expr[:error]
     
     while true
-      if match(:star)
+      if match(TOKEN_STAR)
         right = parse_unary
         return right if right[:error]
         expr = { type: :binary_op, operator: :star, left: expr, right: right }
-      elsif match(:slash)
+      elsif match(TOKEN_SLASH)
         right = parse_unary
         return right if right[:error]
         expr = { type: :binary_op, operator: :slash, left: expr, right: right }
@@ -226,11 +250,11 @@ class ExpressionParser
   end
   
   def parse_unary
-    if match(:not)
+    if match(TOKEN_NOT)
       expr = parse_unary
       return expr if expr[:error]
       return { type: :unary_op, operator: :not, operand: expr }
-    elsif match(:minus)
+    elsif match(TOKEN_MINUS)
       expr = parse_unary
       return expr if expr[:error]
       return { type: :unary_op, operator: :minus, operand: expr }
@@ -240,43 +264,43 @@ class ExpressionParser
   end
   
   def parse_primary
-    if match(:integer)
+    if match(TOKEN_INTEGER)
       return { type: :literal, value: previous.value }
     end
     
-    if match(:boolean)
+    if match(TOKEN_BOOLEAN)
       return { type: :literal, value: previous.value }
     end
     
-    if match(:identifier)
+    if match(TOKEN_IDENTIFIER)
       name = previous.value
       
-      if name.upcase == 'ABS' && match(:lparen)
+      if name.upcase == 'ABS' && match(TOKEN_LPAREN)
         arg = parse_or_expression
         return arg if arg[:error]
-        return { error: PARSING_ERROR } unless match(:rparen)
+        return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
         return { type: :function, name: :abs, args: [arg] }
-      elsif name.upcase == 'MOD' && match(:lparen)
+      elsif name.upcase == 'MOD' && match(TOKEN_LPAREN)
         arg1 = parse_or_expression
         return arg1 if arg1[:error]
-        return { error: PARSING_ERROR } unless match(:comma)
+        return { error: PARSING_ERROR } unless match(TOKEN_COMMA)
         arg2 = parse_or_expression
         return arg2 if arg2[:error]
-        return { error: PARSING_ERROR } unless match(:rparen)
+        return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
         return { type: :function, name: :mod, args: [arg1, arg2] }
       else
         return { type: :column, name: name }
       end
     end
     
-    if match(:abs) && match(:lparen)
+    if match(TOKEN_ABS) && match(TOKEN_LPAREN)
       arg = parse_or_expression
       return arg if arg[:error]
       return { error: PARSING_ERROR } unless match(:rparen)
       return { type: :function, name: :abs, args: [arg] }
     end
     
-    if match(:mod) && match(:lparen)
+    if match(TOKEN_MOD) && match(TOKEN_LPAREN)
       arg1 = parse_or_expression
       return arg1 if arg1[:error]
       return { error: PARSING_ERROR } unless match(:comma)
@@ -286,7 +310,7 @@ class ExpressionParser
       return { type: :function, name: :mod, args: [arg1, arg2] }
     end
     
-    if match(:lparen)
+    if match(TOKEN_LPAREN)
       expr = parse_or_expression
       return expr if expr[:error]
       return { error: PARSING_ERROR } unless match(:rparen)
