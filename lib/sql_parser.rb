@@ -2,6 +2,7 @@ require_relative 'boolean_converter'
 
 class SqlParser
   PARSING_ERROR = 'parsing_error'
+  IDENTIFIER_PATTERN = /[a-zA-Z_][a-zA-Z0-9_]*/
   
   def parse(sql)
     sql = sql.strip
@@ -32,7 +33,7 @@ class SqlParser
   def parse_select(sql)
     # Check for SELECT with FROM clause first
     if sql.match(/\bFROM\b/i)
-      match = sql.match(/\ASELECT\s+(.*?)\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;?\s*\z/i)
+      match = sql.match(/\ASELECT\s+(.*?)\s+FROM\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
       return { error: PARSING_ERROR } unless match
       
       select_list = match[1].strip
@@ -85,7 +86,7 @@ class SqlParser
     parts.each do |part|
       part = part.strip
       
-      if part.match(/\A([a-zA-Z_][a-zA-Z0-9_]*)\z/)
+      if part.match(/\A(#{IDENTIFIER_PATTERN})\z/)
         column_names << part
       else
         return { error: PARSING_ERROR }
@@ -96,9 +97,9 @@ class SqlParser
   end
   
   def parse_select_value(expression)
-    if match = expression.match(/\A(-?\d+)(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
+    if match = expression.match(/\A(-?\d+)(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
       { value: match[1].to_i, column: match[2] }
-    elsif match = expression.match(/\A(#{BooleanConverter::BOOLEAN_TRUE}|#{BooleanConverter::BOOLEAN_FALSE})(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
+    elsif match = expression.match(/\A(#{BooleanConverter::BOOLEAN_TRUE}|#{BooleanConverter::BOOLEAN_FALSE})(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
       { value: match[1].upcase, column: match[2] }
     else
       { error: PARSING_ERROR }
@@ -128,7 +129,7 @@ class SqlParser
   end
   
   def parse_create_table(sql)
-    match = sql.match(/\ACREATE\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*;?\s*\z/i)
+    match = sql.match(/\ACREATE\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*\((.*?)\)\s*;?\s*\z/i)
     
     return { error: PARSING_ERROR } unless match
     
@@ -147,7 +148,7 @@ class SqlParser
     
     column_parts.each do |part|
       part = part.strip
-      match = part.match(/\A([a-zA-Z_][a-zA-Z0-9_]*)\s+(INTEGER|BOOLEAN)\z/i)
+      match = part.match(/\A(#{IDENTIFIER_PATTERN})\s+(INTEGER|BOOLEAN)\z/i)
       
       return { error: PARSING_ERROR } unless match
       
@@ -162,9 +163,9 @@ class SqlParser
   end
   
   def parse_drop_table(sql)
-    if match = sql.match(/\ADROP\s+TABLE\s+IF\s+EXISTS\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;?\s*\z/i)
+    if match = sql.match(/\ADROP\s+TABLE\s+IF\s+EXISTS\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
       { type: :drop_table, table_name: match[1], if_exists: true }
-    elsif match = sql.match(/\ADROP\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;?\s*\z/i)
+    elsif match = sql.match(/\ADROP\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
       { type: :drop_table, table_name: match[1], if_exists: false }
     else
       { error: PARSING_ERROR }
@@ -173,7 +174,7 @@ class SqlParser
   
   def parse_insert(sql)
     # Handle multiple value sets: VALUES (1, 2), (3, 4)
-    match = sql.match(/\AINSERT\s+INTO\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+VALUES\s*(.*)\s*;?\s*\z/i)
+    match = sql.match(/\AINSERT\s+INTO\s+(#{IDENTIFIER_PATTERN})\s+VALUES\s*(.*)\s*;?\s*\z/i)
     
     return { error: PARSING_ERROR } unless match
     
