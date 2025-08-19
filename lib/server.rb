@@ -4,8 +4,11 @@ require_relative 'sql_parser'
 require_relative 'sql_executor'
 
 class Server
+  PORT = 3003
+  MESSAGE_DELIMITER = "\0"
+  
   def initialize
-    @server = TCPServer.new 3003
+    @server = TCPServer.new PORT
     @socket = @server.accept
     @parser = SqlParser.new
     @executor = SqlExecutor.new
@@ -13,16 +16,16 @@ class Server
 
   def run
     loop do
-      message = @socket.gets("\0")
+      message = @socket.gets(MESSAGE_DELIMITER)
       break if message.nil?
-      sql = message.chomp("\0")
+      sql = message.chomp(MESSAGE_DELIMITER)
     
       parsed = @parser.parse(sql)
       result = @executor.execute(parsed)
       response = format_response(result)
     
       @socket.print response
-      @socket.print("\0")
+      @socket.print(MESSAGE_DELIMITER)
     end
   end
   
