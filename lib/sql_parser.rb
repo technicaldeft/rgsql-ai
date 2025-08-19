@@ -1,5 +1,6 @@
 require_relative 'boolean_converter'
 require_relative 'parsing_utils'
+require_relative 'expression_parser'
 
 class SqlParser
   include ParsingUtils
@@ -72,10 +73,10 @@ class SqlParser
       select_list = match[1].strip
       table_name = match[2]
       
-      column_names = parse_column_names(select_list)
-      return column_names if column_names.is_a?(Hash) && column_names[:error]
+      expressions = parse_column_names(select_list)
+      return expressions if expressions.is_a?(Hash) && expressions[:error]
       
-      return { type: :select_from, table_name: table_name, columns: column_names }
+      return { type: :select_from, table_name: table_name, expressions: expressions }
     end
     
     # Original SELECT without FROM
@@ -88,7 +89,7 @@ class SqlParser
     
     select_list = match[1].strip
     
-    values = []
+    expressions = []
     columns = []
     
     if !select_list.empty?
@@ -98,42 +99,65 @@ class SqlParser
         parsed_value = parse_select_value(part)
         return parsed_value if parsed_value[:error]
         
-        values << parsed_value[:value]
+        expressions << parsed_value[:expression]
         columns << parsed_value[:column]
       end
     end
     
-    { type: :select, values: values, columns: columns }
+    { type: :select, expressions: expressions, columns: columns }
   end
   
   def parse_column_names(select_list)
     return [] if select_list.empty?
     
     parts = split_on_comma(select_list)
-    column_names = []
+    expressions = []
     
     parts.each do |part|
       part = part.strip
       
-      # Allow column names with optional AS alias
-      if match = part.match(/\A(#{IDENTIFIER_PATTERN})(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
-        column_names << match[1]
+      # Check for AS alias
+      alias_match = part.match(/(.+?)\s+AS\s+(#{IDENTIFIER_PATTERN})\s*\z/i)
+      
+      if alias_match
+        expr_str = alias_match[1].strip
+        column_alias = alias_match[2]
       else
-        return parse_error
+        expr_str = part
+        column_alias = nil
       end
+      
+      # Parse the expression
+      parser = ExpressionParser.new
+      parsed_expr = parser.parse(expr_str)
+      
+      return parsed_expr if parsed_expr[:error]
+      
+      expressions << { expression: parsed_expr, alias: column_alias }
     end
     
-    column_names
+    expressions
   end
   
   def parse_select_value(expression)
-    if match = expression.match(/\A(-?\d+)(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
-      { value: match[1].to_i, column: match[2] }
-    elsif match = expression.match(/\A(#{BooleanConverter::BOOLEAN_TRUE}|#{BooleanConverter::BOOLEAN_FALSE})(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
-      { value: match[1].upcase, column: match[2] }
+    # Check for AS alias
+    alias_match = expression.match(/(.+?)\s+AS\s+(#{IDENTIFIER_PATTERN})\s*\z/i)
+    
+    if alias_match
+      expr_str = alias_match[1].strip
+      column_alias = alias_match[2]
     else
-      parse_error
+      expr_str = expression.strip
+      column_alias = nil
     end
+    
+    # Parse the expression
+    parser = ExpressionParser.new
+    parsed_expr = parser.parse(expr_str)
+    
+    return parsed_expr if parsed_expr[:error]
+    
+    { expression: parsed_expr, column: column_alias }
   end
   
   def parse_create_table(sql)
@@ -217,13 +241,13 @@ class SqlParser
     parts.each do |part|
       part = part.strip
       
-      if part.match(/\A#{INTEGER_PATTERN}\z/)
-        values << part.to_i
-      elsif part.match(/\A(TRUE|FALSE)\z/i)
-        values << part.upcase
-      else
-        return parse_error
-      end
+      # Parse as expression
+      parser = ExpressionParser.new
+      parsed_expr = parser.parse(part)
+      
+      return parsed_expr if parsed_expr[:error]
+      
+      values << parsed_expr
     end
     
     values

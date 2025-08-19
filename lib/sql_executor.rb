@@ -1,5 +1,6 @@
 require_relative 'table_manager'
 require_relative 'boolean_converter'
+require_relative 'expression_evaluator'
 
 class SqlExecutor
   def initialize
@@ -30,16 +31,26 @@ class SqlExecutor
   private
   
   def execute_select(parsed_sql)
-    values = parsed_sql[:values]
+    expressions = parsed_sql[:expressions]
     columns = parsed_sql[:columns]
     
-    if values.empty?
+    if expressions.empty?
       return { rows: [] }
     end
     
-    converted_values = values.map { |value| BooleanConverter.convert(value) }
+    evaluator = ExpressionEvaluator.new
+    values = []
     
-    result = { rows: [converted_values] }
+    begin
+      values = expressions.map do |expr|
+        value = evaluator.evaluate(expr)
+        BooleanConverter.convert(value)
+      end
+    rescue ExpressionEvaluator::ValidationError
+      return { error: 'validation_error' }
+    end
+    
+    result = { rows: [values] }
     
     if columns.any?(&:itself)
       result[:columns] = columns.map { |col| col || '' }
@@ -50,16 +61,50 @@ class SqlExecutor
   
   def execute_select_from(parsed_sql)
     table_name = parsed_sql[:table_name]
-    column_names = parsed_sql[:columns]
+    expressions = parsed_sql[:expressions]
     
-    result = @table_manager.select_from_table(table_name, column_names)
-    return result if result[:error]
+    # Get table info
+    table_info = @table_manager.get_table_info(table_name)
+    return { error: 'validation_error' } unless table_info
     
-    converted_rows = result[:rows].map do |row|
-      row.map { |value| BooleanConverter.convert(value) }
+    # Get all rows from table
+    all_data = @table_manager.get_all_rows(table_name)
+    return all_data if all_data[:error]
+    
+    evaluator = ExpressionEvaluator.new
+    result_rows = []
+    
+    begin
+      all_data[:rows].each do |row|
+        # Build row data hash for column lookups
+        row_data = {}
+        table_info[:columns].each_with_index do |col, idx|
+          row_data[col[:name]] = row[idx]
+        end
+        
+        # Evaluate expressions for this row
+        result_row = expressions.map do |expr_info|
+          value = evaluator.evaluate(expr_info[:expression], row_data)
+          BooleanConverter.convert(value)
+        end
+        result_rows << result_row
+      end
+    rescue ExpressionEvaluator::ValidationError
+      return { error: 'validation_error' }
     end
     
-    { rows: converted_rows, columns: result[:columns] }
+    # Build column names from expressions or aliases
+    column_names = expressions.map do |expr_info|
+      if expr_info[:alias]
+        expr_info[:alias]
+      elsif expr_info[:expression][:type] == :column
+        expr_info[:expression][:name]
+      else
+        ''
+      end
+    end
+    
+    { rows: result_rows, columns: column_names }
   end
   
   def execute_create_table(parsed_sql)
@@ -74,9 +119,20 @@ class SqlExecutor
     table_name = parsed_sql[:table_name]
     value_sets = parsed_sql[:value_sets]
     
-    value_sets.each do |values|
-      result = @table_manager.insert_row(table_name, values)
-      return result if result[:error]
+    evaluator = ExpressionEvaluator.new
+    
+    begin
+      value_sets.each do |expressions|
+        # Evaluate each expression to get actual values
+        values = expressions.map do |expr|
+          evaluator.evaluate(expr)
+        end
+        
+        result = @table_manager.insert_row(table_name, values)
+        return result if result[:error]
+      end
+    rescue ExpressionEvaluator::ValidationError
+      return { error: 'validation_error' }
     end
     
     { status: 'ok' }

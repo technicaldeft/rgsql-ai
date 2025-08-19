@@ -66,4 +66,15 @@ class TableManager
     
     { rows: rows, columns: column_names }
   end
+  
+  def get_table_info(table_name)
+    @tables[table_name]
+  end
+  
+  def get_all_rows(table_name)
+    table = @tables[table_name]
+    return { error: 'validation_error' } unless table
+    
+    { rows: table[:rows] }
+  end
 end
