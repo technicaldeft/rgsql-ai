@@ -32,23 +32,21 @@ class Server
   private
   
   def format_response(result)
-    if result[:error]
-      { status: 'error', error_type: result[:error] }.to_json
-    elsif result[:status]
-      { status: result[:status] }.to_json
-    elsif result[:rows].nil?
-      { status: 'ok' }.to_json
-    elsif result[:rows].empty?
-      response = { status: 'ok', rows: [] }
+    response = build_response(result)
+    response.to_json
+  end
+  
+  def build_response(result)
+    return { status: 'error', error_type: result[:error] } if result[:error]
+    return { status: result[:status] } if result[:status]
+    
+    response = { status: 'ok' }
+    
+    if result[:rows]
+      response[:rows] = result[:rows]
       response[:column_names] = result[:columns] if result[:columns]
-      response.to_json
-    else
-      formatted = {
-        status: 'ok',
-        rows: result[:rows]
-      }
-      formatted[:column_names] = result[:columns] if result[:columns]
-      formatted.to_json
     end
+    
+    response
   end
 end
