@@ -8,9 +8,7 @@ class SqlExecutor
   end
   
   def execute(parsed_sql)
-    if parsed_sql[:error]
-      return { error: parsed_sql[:error] }
-    end
+    return parsed_sql if has_error?(parsed_sql)
     
     case parsed_sql[:type]
     when :select
@@ -29,6 +27,10 @@ class SqlExecutor
   end
   
   private
+  
+  def has_error?(result)
+    result.is_a?(Hash) && result[:error]
+  end
   
   def execute_select(parsed_sql)
     expressions = parsed_sql[:expressions]
@@ -69,7 +71,7 @@ class SqlExecutor
     
     # Get all rows from table
     all_data = @table_manager.get_all_rows(table_name)
-    return all_data if all_data[:error]
+    return all_data if has_error?(all_data)
     
     evaluator = ExpressionEvaluator.new
     result_rows = []
@@ -129,7 +131,7 @@ class SqlExecutor
         end
         
         result = @table_manager.insert_row(table_name, values)
-        return result if result[:error]
+        return result if has_error?(result)
       end
     rescue ExpressionEvaluator::ValidationError
       return { error: 'validation_error' }
