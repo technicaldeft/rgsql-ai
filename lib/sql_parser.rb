@@ -1,6 +1,6 @@
+require_relative 'boolean_converter'
+
 class SqlParser
-  BOOLEAN_TRUE = 'TRUE'
-  BOOLEAN_FALSE = 'FALSE'
   PARSING_ERROR = 'parsing_error'
   
   def parse(sql)
@@ -98,7 +98,7 @@ class SqlParser
   def parse_select_value(expression)
     if match = expression.match(/\A(-?\d+)(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
       { value: match[1].to_i, column: match[2] }
-    elsif match = expression.match(/\A(#{BOOLEAN_TRUE}|#{BOOLEAN_FALSE})(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
+    elsif match = expression.match(/\A(#{BooleanConverter::BOOLEAN_TRUE}|#{BooleanConverter::BOOLEAN_FALSE})(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?\z/i)
       { value: match[1].upcase, column: match[2] }
     else
       { error: PARSING_ERROR }

@@ -1,9 +1,7 @@
 require_relative 'table_manager'
+require_relative 'boolean_converter'
 
 class SqlExecutor
-  BOOLEAN_TRUE = 'TRUE'
-  BOOLEAN_FALSE = 'FALSE'
-  
   def initialize
     @table_manager = TableManager.new
   end
@@ -39,16 +37,7 @@ class SqlExecutor
       return { rows: [] }
     end
     
-    converted_values = values.map do |value|
-      case value
-      when BOOLEAN_TRUE
-        true
-      when BOOLEAN_FALSE
-        false
-      else
-        value
-      end
-    end
+    converted_values = values.map { |value| BooleanConverter.convert(value) }
     
     result = { rows: [converted_values] }
     
@@ -67,7 +56,7 @@ class SqlExecutor
     return result if result[:error]
     
     converted_rows = result[:rows].map do |row|
-      row.map { |value| convert_value(value) }
+      row.map { |value| BooleanConverter.convert(value) }
     end
     
     { rows: converted_rows, columns: result[:columns] }
@@ -91,16 +80,5 @@ class SqlExecutor
     end
     
     { status: 'ok' }
-  end
-  
-  def convert_value(value)
-    case value
-    when BOOLEAN_TRUE
-      true
-    when BOOLEAN_FALSE
-      false
-    else
-      value
-    end
   end
 end
