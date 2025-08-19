@@ -35,10 +35,10 @@ class SqlParser
     sql = sql.strip
     return parse_error if sql.empty?
     
-    first_word = sql.match(/\A([A-Z]+)/i)
-    return parse_error unless first_word
+    statement_type = extract_statement_type(sql)
+    return parse_error unless statement_type
     
-    case first_word[1].upcase
+    case statement_type
     when STATEMENT_SELECT
       parse_select(sql)
     when STATEMENT_CREATE
@@ -53,6 +53,12 @@ class SqlParser
   end
   
   private
+  
+  def extract_statement_type(sql)
+    first_word = sql.match(/\A([A-Z]+)/i)
+    return nil unless first_word
+    first_word[1].upcase
+  end
   
   def is_reserved_keyword?(name)
     RESERVED_KEYWORDS.include?(name.upcase)
