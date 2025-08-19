@@ -23,13 +23,10 @@ class SqlParser
   
   def parse(sql)
     sql = sql.strip
-    
-    if sql.empty?
-      return { error: PARSING_ERROR }
-    end
+    return parse_error if sql.empty?
     
     first_word = sql.match(/\A([A-Z]+)/i)
-    return { error: PARSING_ERROR } unless first_word
+    return parse_error unless first_word
     
     case first_word[1].upcase
     when 'SELECT'
@@ -41,7 +38,7 @@ class SqlParser
     when 'INSERT'
       parse_insert(sql)
     else
-      { error: PARSING_ERROR }
+      parse_error
     end
   end
   
@@ -75,14 +72,10 @@ class SqlParser
     # Original SELECT without FROM
     match = sql.match(/\ASELECT#{OPTIONAL_WHITESPACE}(.*?)#{OPTIONAL_SEMICOLON}/im)
     
-    if match.nil?
-      return { error: PARSING_ERROR }
-    end
+    return parse_error unless match
     
     remainder = sql[match.end(0)..-1].strip
-    if !remainder.empty?
-      return { error: PARSING_ERROR }
-    end
+    return parse_error unless remainder.empty?
     
     select_list = match[1].strip
     
@@ -117,7 +110,7 @@ class SqlParser
       if match = part.match(/\A(#{IDENTIFIER_PATTERN})(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
         column_names << match[1]
       else
-        return { error: PARSING_ERROR }
+        return parse_error
       end
     end
     
@@ -130,20 +123,19 @@ class SqlParser
     elsif match = expression.match(/\A(#{BooleanConverter::BOOLEAN_TRUE}|#{BooleanConverter::BOOLEAN_FALSE})(?:\s+AS\s+(#{IDENTIFIER_PATTERN}))?\z/i)
       { value: match[1].upcase, column: match[2] }
     else
-      { error: PARSING_ERROR }
+      parse_error
     end
   end
   
   def parse_create_table(sql)
     match = sql.match(/\ACREATE\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*\((.*?)\)\s*;?\s*\z/im)
-    
-    return { error: PARSING_ERROR } unless match
+    return parse_error unless match
     
     table_name = match[1]
     columns_str = match[2]
     
     # Check if table name is a reserved keyword
-    return { error: PARSING_ERROR } if is_reserved_keyword?(table_name)
+    return parse_error if is_reserved_keyword?(table_name)
     
     columns = parse_column_definitions(columns_str)
     return columns if columns.is_a?(Hash) && columns[:error]
@@ -158,12 +150,11 @@ class SqlParser
     column_parts.each do |part|
       part = part.strip
       match = part.match(/\A(#{IDENTIFIER_PATTERN})\s+(INTEGER|BOOLEAN)\z/i)
-      
-      return { error: PARSING_ERROR } unless match
+      return parse_error unless match
       
       column_name = match[1]
       # Check if column name is a reserved keyword
-      return { error: PARSING_ERROR } if is_reserved_keyword?(column_name)
+      return parse_error if is_reserved_keyword?(column_name)
       
       columns << { name: column_name, type: match[2].upcase }
     end
@@ -181,15 +172,14 @@ class SqlParser
     elsif match = sql.match(/\ADROP\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
       { type: :drop_table, table_name: match[1], if_exists: false }
     else
-      { error: PARSING_ERROR }
+      parse_error
     end
   end
   
   def parse_insert(sql)
     # Handle multiple value sets: VALUES (1, 2), (3, 4)
     match = sql.match(/\AINSERT\s+INTO\s+(#{IDENTIFIER_PATTERN})\s+VALUES\s*(.*)\s*;?\s*\z/im)
-    
-    return { error: PARSING_ERROR } unless match
+    return parse_error unless match
     
     table_name = match[1]
     values_clause = match[2].strip
@@ -204,7 +194,7 @@ class SqlParser
       value_sets << values
     end
     
-    return { error: PARSING_ERROR } if value_sets.empty?
+    return parse_error if value_sets.empty?
     
     { type: :insert_multiple, table_name: table_name, value_sets: value_sets }
   end
@@ -218,12 +208,12 @@ class SqlParser
     parts.each do |part|
       part = part.strip
       
-      if part.match(/\A-?\d+\z/)
+      if part.match(/\A#{INTEGER_PATTERN}\z/)
         values << part.to_i
       elsif part.match(/\A(TRUE|FALSE)\z/i)
         values << part.upcase
       else
-        return { error: PARSING_ERROR }
+        return parse_error
       end
     end
     

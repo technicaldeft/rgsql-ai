@@ -51,7 +51,7 @@ module ParsingUtils
   end
   
   def parse_error
-    { error: PARSING_ERROR }
+    { error: 'parsing_error' }
   end
   
   def is_error?(result)
