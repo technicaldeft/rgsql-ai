@@ -187,18 +187,23 @@ class SqlParser
     columns = []
     
     column_parts.each do |part|
-      part = part.strip
-      match = part.match(/\A(#{IDENTIFIER_PATTERN})\s+(#{DATA_TYPES.join('|')})\z/i)
-      return parse_error unless match
-      
-      column_name = match[1]
-      # Check if column name is a reserved keyword
-      return parse_error if is_reserved_keyword?(column_name)
-      
-      columns << { name: column_name, type: match[2].upcase }
+      column = parse_single_column_definition(part)
+      return column if column.is_a?(Hash) && column[:error]
+      columns << column
     end
     
     columns
+  end
+  
+  def parse_single_column_definition(column_def)
+    column_def = column_def.strip
+    match = column_def.match(/\A(#{IDENTIFIER_PATTERN})\s+(#{DATA_TYPES.join('|')})\z/i)
+    return parse_error unless match
+    
+    column_name = match[1]
+    return parse_error if is_reserved_keyword?(column_name)
+    
+    { name: column_name, type: match[2].upcase }
   end
   
   def split_column_list(columns_str)
