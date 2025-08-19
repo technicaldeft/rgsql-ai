@@ -1,8 +1,21 @@
 require_relative 'boolean_converter'
+require_relative 'parsing_utils'
 
 class SqlParser
+  include ParsingUtils
   PARSING_ERROR = 'parsing_error'
+  
+  # Regex patterns for parsing
   IDENTIFIER_PATTERN = /[a-zA-Z_][a-zA-Z0-9_]*/
+  INTEGER_PATTERN = /-?\d+/
+  WHITESPACE = /\s+/
+  OPTIONAL_WHITESPACE = /\s*/
+  OPTIONAL_SEMICOLON = /;?\s*\z/
+  
+  # Multiline regex flags
+  MULTILINE_FLAGS = /im/
+  
+  # Reserved SQL keywords
   RESERVED_KEYWORDS = %w[
     SELECT FROM CREATE TABLE DROP INSERT INTO VALUES
     INTEGER BOOLEAN AS IF EXISTS
@@ -38,11 +51,17 @@ class SqlParser
     RESERVED_KEYWORDS.include?(name.upcase)
   end
   
+  def validate_identifier(name)
+    return parse_error if is_reserved_keyword?(name)
+    return parse_error unless name.match(/\A#{IDENTIFIER_PATTERN}\z/)
+    true
+  end
+  
   def parse_select(sql)
     # Check for SELECT with FROM clause first
     if sql.match(/\bFROM\b/i)
-      match = sql.match(/\ASELECT\s+(.*?)\s+FROM\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/im)
-      return { error: PARSING_ERROR } unless match
+      match = sql.match(/\ASELECT#{WHITESPACE}(.*?)#{WHITESPACE}FROM#{WHITESPACE}(#{IDENTIFIER_PATTERN})#{OPTIONAL_WHITESPACE}#{OPTIONAL_SEMICOLON}/im)
+      return parse_error unless match
       
       select_list = match[1].strip
       table_name = match[2]
@@ -54,7 +73,7 @@ class SqlParser
     end
     
     # Original SELECT without FROM
-    match = sql.match(/\ASELECT\s*(.*?)(?:\s*;\s*\z|\z)/im)
+    match = sql.match(/\ASELECT#{OPTIONAL_WHITESPACE}(.*?)#{OPTIONAL_SEMICOLON}/im)
     
     if match.nil?
       return { error: PARSING_ERROR }
@@ -71,7 +90,7 @@ class SqlParser
     columns = []
     
     if !select_list.empty?
-      parts = split_select_list(select_list)
+      parts = split_on_comma(select_list)
       
       parts.each do |part|
         parsed_value = parse_select_value(part)
@@ -88,7 +107,7 @@ class SqlParser
   def parse_column_names(select_list)
     return [] if select_list.empty?
     
-    parts = split_select_list(select_list)
+    parts = split_on_comma(select_list)
     column_names = []
     
     parts.each do |part|
@@ -113,28 +132,6 @@ class SqlParser
     else
       { error: PARSING_ERROR }
     end
-  end
-  
-  def split_select_list(select_list)
-    return [] if select_list.empty?
-    
-    parts = []
-    current = ""
-    depth = 0
-    
-    select_list.chars.each do |char|
-      if char == ',' && depth == 0
-        parts << current.strip
-        current = ""
-      else
-        current += char
-        depth += 1 if char == '('
-        depth -= 1 if char == ')'
-      end
-    end
-    
-    parts << current.strip unless current.strip.empty?
-    parts
   end
   
   def parse_create_table(sql)
@@ -175,7 +172,7 @@ class SqlParser
   end
   
   def split_column_list(columns_str)
-    split_select_list(columns_str)
+    split_on_comma(columns_str)
   end
   
   def parse_drop_table(sql)
@@ -198,31 +195,13 @@ class SqlParser
     values_clause = match[2].strip
     
     # Extract all value sets - handle nested parentheses properly
+    groups = extract_parenthesized_groups(values_clause)
     value_sets = []
-    current_set = ""
-    depth = 0
-    in_set = false
     
-    values_clause.chars.each do |char|
-      if char == '(' && depth == 0
-        in_set = true
-        depth = 1
-        current_set = ""
-      elsif char == '(' && in_set
-        depth += 1
-        current_set += char
-      elsif char == ')' && depth == 1
-        values = parse_value_list(current_set)
-        return values if values.is_a?(Hash) && values[:error]
-        value_sets << values
-        in_set = false
-        depth = 0
-      elsif char == ')' && in_set
-        depth -= 1
-        current_set += char
-      elsif in_set
-        current_set += char
-      end
+    groups.each do |group|
+      values = parse_value_list(group)
+      return values if is_error?(values)
+      value_sets << values
     end
     
     return { error: PARSING_ERROR } if value_sets.empty?
@@ -233,7 +212,7 @@ class SqlParser
   def parse_value_list(values_str)
     return [] if values_str.strip.empty?
     
-    parts = split_select_list(values_str)
+    parts = split_on_comma(values_str)
     values = []
     
     parts.each do |part|
