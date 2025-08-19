@@ -21,6 +21,15 @@ class SqlParser
     INTEGER BOOLEAN AS IF EXISTS
   ].freeze
   
+  # SQL data types
+  DATA_TYPES = %w[INTEGER BOOLEAN].freeze
+  
+  # Statement types
+  STATEMENT_SELECT = 'SELECT'.freeze
+  STATEMENT_CREATE = 'CREATE'.freeze
+  STATEMENT_DROP = 'DROP'.freeze
+  STATEMENT_INSERT = 'INSERT'.freeze
+  
   def parse(sql)
     sql = sql.strip
     return parse_error if sql.empty?
@@ -29,13 +38,13 @@ class SqlParser
     return parse_error unless first_word
     
     case first_word[1].upcase
-    when 'SELECT'
+    when STATEMENT_SELECT
       parse_select(sql)
-    when 'CREATE'
+    when STATEMENT_CREATE
       parse_create_table(sql)
-    when 'DROP'
+    when STATEMENT_DROP
       parse_drop_table(sql)
-    when 'INSERT'
+    when STATEMENT_INSERT
       parse_insert(sql)
     else
       parse_error
@@ -149,7 +158,7 @@ class SqlParser
     
     column_parts.each do |part|
       part = part.strip
-      match = part.match(/\A(#{IDENTIFIER_PATTERN})\s+(INTEGER|BOOLEAN)\z/i)
+      match = part.match(/\A(#{IDENTIFIER_PATTERN})\s+(#{DATA_TYPES.join('|')})\z/i)
       return parse_error unless match
       
       column_name = match[1]
