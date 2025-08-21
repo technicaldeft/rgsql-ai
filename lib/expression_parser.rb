@@ -101,6 +101,8 @@ class ExpressionParser
           tokens << Token.new(SqlConstants::TOKEN_TYPES[:boolean], true)
         when 'FALSE'
           tokens << Token.new(SqlConstants::TOKEN_TYPES[:boolean], false)
+        when 'NULL'
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:null], nil)
         when 'NOT'
           tokens << Token.new(SqlConstants::TOKEN_TYPES[:not], 'NOT')
         when 'AND'
@@ -247,6 +249,10 @@ class ExpressionParser
     
     if match(SqlConstants::TOKEN_TYPES[:boolean])
       return { type: :literal, value: previous.value }
+    end
+    
+    if match(SqlConstants::TOKEN_TYPES[:null])
+      return { type: :literal, value: nil }
     end
     
     if match(SqlConstants::TOKEN_TYPES[:identifier])

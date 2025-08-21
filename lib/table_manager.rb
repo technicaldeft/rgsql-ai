@@ -45,11 +45,15 @@ class TableManager
     table = @tables[table_name]
     return { error: 'validation_error' } unless table
     
-    if values.length != table[:columns].length
+    # Allow fewer values than columns - pad with NULLs
+    if values.length > table[:columns].length
       return validation_error
     end
     
-    table[:rows] << values
+    # Pad values with nil (NULL) if fewer values than columns
+    padded_values = values + Array.new(table[:columns].length - values.length, nil)
+    
+    table[:rows] << padded_values
     ok_status
   end
   

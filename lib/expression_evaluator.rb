@@ -5,7 +5,7 @@ class ExpressionEvaluator
   def validate_types(expression, row_data = {})
     case expression[:type]
     when :literal
-      # Literals have their own type
+      # Literals have their own type (including NULL/nil)
       expression[:value]
     when :column
       column_name = expression[:name]
@@ -53,6 +53,9 @@ class ExpressionEvaluator
     left = validate_types(expression[:left], row_data)
     right = validate_types(expression[:right], row_data)
     
+    # NULL is valid in any expression context
+    return nil if left.nil? || right.nil?
+    
     case expression[:operator]
     when :plus, :minus, :star, :slash
       validate_integers(left, right)
@@ -75,6 +78,9 @@ class ExpressionEvaluator
   def validate_unary_op_types(expression, row_data)
     operand = validate_types(expression[:operand], row_data)
     
+    # NULL is valid in any expression context
+    return nil if operand.nil?
+    
     case expression[:operator]
     when :minus
       validate_integer(operand)
@@ -92,12 +98,16 @@ class ExpressionEvaluator
     when :abs
       raise ValidationError, "Wrong number of arguments for ABS" unless expression[:args].length == 1
       arg = validate_types(expression[:args][0], row_data)
+      # NULL is valid
+      return nil if arg.nil?
       validate_integer(arg)
       0  # Return dummy integer type
     when :mod
       raise ValidationError, "Wrong number of arguments for MOD" unless expression[:args].length == 2
       arg1 = validate_types(expression[:args][0], row_data)
       arg2 = validate_types(expression[:args][1], row_data)
+      # NULL is valid
+      return nil if arg1.nil? || arg2.nil?
       validate_integer(arg1)
       validate_integer(arg2)
       0  # Return dummy integer type
@@ -112,6 +122,9 @@ class ExpressionEvaluator
     
     case expression[:operator]
     when :plus, :minus, :star, :slash
+      # NULL propagation for mathematical operators
+      return nil if left.nil? || right.nil?
+      
       validate_integers(left, right)
       case expression[:operator]
       when :plus
@@ -125,6 +138,9 @@ class ExpressionEvaluator
         left / right
       end
     when :lt, :gt, :lte, :gte
+      # NULL propagation for comparison operators
+      return nil if left.nil? || right.nil?
+      
       validate_same_type(left, right)
       case expression[:operator]
       when :lt
@@ -137,6 +153,9 @@ class ExpressionEvaluator
         compare_values(left, right) >= 0
       end
     when :equal, :not_equal
+      # NULL propagation for equality operators
+      return nil if left.nil? || right.nil?
+      
       validate_same_type(left, right)
       case expression[:operator]
       when :equal
@@ -145,10 +164,34 @@ class ExpressionEvaluator
         left != right
       end
     when :and
+      # Special NULL handling for AND:
+      # FALSE AND NULL = FALSE
+      # NULL AND FALSE = FALSE  
+      # TRUE AND NULL = NULL
+      # NULL AND TRUE = NULL
+      # NULL AND NULL = NULL
+      if left == false || right == false
+        return false
+      elsif left.nil? || right.nil?
+        return nil
+      end
+      
       validate_boolean(left)
       validate_boolean(right)
       to_boolean(left) && to_boolean(right)
     when :or
+      # Special NULL handling for OR:
+      # TRUE OR NULL = TRUE
+      # NULL OR TRUE = TRUE
+      # FALSE OR NULL = NULL
+      # NULL OR FALSE = NULL
+      # NULL OR NULL = NULL
+      if left == true || right == true
+        return true
+      elsif left.nil? || right.nil?
+        return nil
+      end
+      
       validate_boolean(left)
       validate_boolean(right)
       to_boolean(left) || to_boolean(right)
@@ -159,6 +202,9 @@ class ExpressionEvaluator
   
   def evaluate_unary_op(expression, row_data)
     operand = evaluate(expression[:operand], row_data)
+    
+    # NULL propagation for unary operators
+    return nil if operand.nil?
     
     case expression[:operator]
     when :minus
@@ -177,11 +223,15 @@ class ExpressionEvaluator
     when :abs
       raise ValidationError, "Wrong number of arguments for ABS" unless expression[:args].length == 1
       args = expression[:args].map { |arg| evaluate(arg, row_data) }
+      # NULL propagation for ABS
+      return nil if args[0].nil?
       validate_integer(args[0])
       args[0].abs
     when :mod
       raise ValidationError, "Wrong number of arguments for MOD" unless expression[:args].length == 2
       args = expression[:args].map { |arg| evaluate(arg, row_data) }
+      # NULL propagation for MOD
+      return nil if args[0].nil? || args[1].nil?
       validate_integer(args[0])
       validate_integer(args[1])
       args[0] % args[1]

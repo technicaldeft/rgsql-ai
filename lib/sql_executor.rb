@@ -168,6 +168,9 @@ class SqlExecutor
         values.each_with_index do |value, idx|
           column = table_info[:columns][idx]
           if column
+            # NULL is allowed for any column type
+            next if value.nil?
+            
             case column[:type]
             when 'INTEGER'
               unless value.is_a?(Integer)

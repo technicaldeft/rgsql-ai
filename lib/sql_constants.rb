@@ -1,7 +1,7 @@
 module SqlConstants
   RESERVED_KEYWORDS = %w[
     SELECT FROM CREATE TABLE DROP INSERT INTO VALUES
-    INTEGER BOOLEAN AS IF EXISTS NOT AND OR ABS MOD
+    INTEGER BOOLEAN AS IF EXISTS NOT AND OR ABS MOD NULL
   ].freeze
   
   DATA_TYPES = %w[INTEGER BOOLEAN].freeze
@@ -42,7 +42,8 @@ module SqlConstants
     or: :or,
     abs: :abs,
     mod: :mod,
-    as: :as
+    as: :as,
+    null: :null
   }.freeze
   
   OPERATORS = {
