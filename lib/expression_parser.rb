@@ -290,39 +290,59 @@ class ExpressionParser
     if match(TOKEN_IDENTIFIER)
       name = previous.value
       
-      if name.upcase == 'ABS' && match(TOKEN_LPAREN)
-        arg = parse_or_expression
-        return arg if arg[:error]
+      if match(TOKEN_LPAREN)
+        # Parse as a function call - parse arguments generically
+        args = []
+        unless check(TOKEN_RPAREN)
+          loop do
+            arg = parse_or_expression
+            return arg if arg[:error]
+            args << arg
+            break unless match(TOKEN_COMMA)
+          end
+        end
         return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
-        return { type: :function, name: :abs, args: [arg] }
-      elsif name.upcase == 'MOD' && match(TOKEN_LPAREN)
-        arg1 = parse_or_expression
-        return arg1 if arg1[:error]
-        return { error: PARSING_ERROR } unless match(TOKEN_COMMA)
-        arg2 = parse_or_expression
-        return arg2 if arg2[:error]
-        return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
-        return { type: :function, name: :mod, args: [arg1, arg2] }
+        
+        # Return the function with the appropriate name
+        case name.upcase
+        when 'ABS'
+          return { type: :function, name: :abs, args: args }
+        when 'MOD'
+          return { type: :function, name: :mod, args: args }
+        else
+          return { type: :function, name: name.downcase.to_sym, args: args }
+        end
       else
         return { type: :column, name: name }
       end
     end
     
     if match(TOKEN_ABS) && match(TOKEN_LPAREN)
-      arg = parse_or_expression
-      return arg if arg[:error]
-      return { error: PARSING_ERROR } unless match(:rparen)
-      return { type: :function, name: :abs, args: [arg] }
+      args = []
+      unless check(TOKEN_RPAREN)
+        loop do
+          arg = parse_or_expression
+          return arg if arg[:error]
+          args << arg
+          break unless match(TOKEN_COMMA)
+        end
+      end
+      return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
+      return { type: :function, name: :abs, args: args }
     end
     
     if match(TOKEN_MOD) && match(TOKEN_LPAREN)
-      arg1 = parse_or_expression
-      return arg1 if arg1[:error]
-      return { error: PARSING_ERROR } unless match(:comma)
-      arg2 = parse_or_expression
-      return arg2 if arg2[:error]
-      return { error: PARSING_ERROR } unless match(:rparen)
-      return { type: :function, name: :mod, args: [arg1, arg2] }
+      args = []
+      unless check(TOKEN_RPAREN)
+        loop do
+          arg = parse_or_expression
+          return arg if arg[:error]
+          args << arg
+          break unless match(TOKEN_COMMA)
+        end
+      end
+      return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
+      return { type: :function, name: :mod, args: args }
     end
     
     if match(TOKEN_LPAREN)

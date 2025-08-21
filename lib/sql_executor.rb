@@ -44,10 +44,18 @@ class SqlExecutor
     values = []
     
     begin
+      # First validate types
+      expressions.each do |expr|
+        evaluator.validate_types(expr)
+      end
+      
+      # Then evaluate
       values = expressions.map do |expr|
         value = evaluator.evaluate(expr)
         BooleanConverter.convert(value)
       end
+    rescue ExpressionEvaluator::DivisionByZeroError
+      return { error: 'division_by_zero_error' }
     rescue ExpressionEvaluator::ValidationError
       return { error: 'validation_error' }
     end
@@ -76,7 +84,27 @@ class SqlExecutor
     evaluator = ExpressionEvaluator.new
     result_rows = []
     
+    # Validate expressions against schema even if table is empty
     begin
+      # Create a dummy row with appropriate types for validation
+      dummy_row_data = {}
+      table_info[:columns].each do |col|
+        case col[:type]
+        when 'BOOLEAN'
+          dummy_row_data[col[:name]] = true
+        when 'INTEGER'
+          dummy_row_data[col[:name]] = 0
+        else
+          dummy_row_data[col[:name]] = nil
+        end
+      end
+      
+      # First validate types with dummy data
+      expressions.each do |expr_info|
+        evaluator.validate_types(expr_info[:expression], dummy_row_data)
+      end
+      
+      # Then evaluate for real rows
       all_data[:rows].each do |row|
         # Build row data hash for column lookups
         row_data = {}
@@ -91,6 +119,8 @@ class SqlExecutor
         end
         result_rows << result_row
       end
+    rescue ExpressionEvaluator::DivisionByZeroError
+      return { error: 'division_by_zero_error' }
     rescue ExpressionEvaluator::ValidationError
       return { error: 'validation_error' }
     end
@@ -121,8 +151,14 @@ class SqlExecutor
     table_name = parsed_sql[:table_name]
     value_sets = parsed_sql[:value_sets]
     
+    # Get table info for type validation
+    table_info = @table_manager.get_table_info(table_name)
+    return { error: 'validation_error' } unless table_info
+    
     evaluator = ExpressionEvaluator.new
     
+    # First, evaluate and validate all rows
+    all_values = []
     begin
       value_sets.each do |expressions|
         # Evaluate each expression to get actual values
@@ -130,11 +166,35 @@ class SqlExecutor
           evaluator.evaluate(expr)
         end
         
-        result = @table_manager.insert_row(table_name, values)
-        return result if has_error?(result)
+        # Validate types match table schema
+        values.each_with_index do |value, idx|
+          column = table_info[:columns][idx]
+          if column
+            case column[:type]
+            when 'INTEGER'
+              unless value.is_a?(Integer)
+                return { error: 'validation_error' }
+              end
+            when 'BOOLEAN'
+              unless [true, false].include?(value)
+                return { error: 'validation_error' }
+              end
+            end
+          end
+        end
+        
+        all_values << values
       end
+    rescue ExpressionEvaluator::DivisionByZeroError
+      return { error: 'division_by_zero_error' }
     rescue ExpressionEvaluator::ValidationError
       return { error: 'validation_error' }
+    end
+    
+    # Only insert if all rows are valid
+    all_values.each do |values|
+      result = @table_manager.insert_row(table_name, values)
+      return result if has_error?(result)
     end
     
     { status: 'ok' }
