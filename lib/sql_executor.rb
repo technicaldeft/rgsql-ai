@@ -338,36 +338,29 @@ class SqlExecutor
   
   def sort_rows(rows, order_by, alias_mapping, evaluator, columns)
     rows.sort do |a, b|
-      # Evaluate the ORDER BY expression for each row
-      a_value = evaluate_order_expression(a, order_by[:expression], alias_mapping, evaluator, columns)
-      b_value = evaluate_order_expression(b, order_by[:expression], alias_mapping, evaluator, columns)
+      a_value = evaluate_sort_value(a, order_by, alias_mapping, evaluator)
+      b_value = evaluate_sort_value(b, order_by, alias_mapping, evaluator)
       
-      # Compare values considering NULLs
-      comparison = compare_values_for_sort(a_value, b_value)
-      
-      # Apply direction
-      if order_by[:direction] == 'DESC'
-        -comparison
-      else
-        comparison
-      end
+      apply_sort_direction(compare_values_for_sort(a_value, b_value), order_by[:direction])
     end
   end
   
-  def evaluate_order_expression(row_info, expr, alias_mapping, evaluator, columns)
-    # Check if it's a simple alias reference
-    if expr[:type] == :column && alias_mapping[expr[:name]]
-      # Find the index of the aliased expression in the result
-      alias_name = expr[:name]
-      # The result row already has the evaluated expression values
-      # We need to find which position corresponds to this alias
-      # This is a bit tricky - we need to look up the alias in our expressions
-      # For now, let's re-evaluate the original expression
-      evaluator.evaluate(alias_mapping[alias_name], row_info[:row_data])
+  def evaluate_sort_value(row_info, order_by, alias_mapping, evaluator)
+    expr = order_by[:expression]
+    
+    if is_alias_reference?(expr, alias_mapping)
+      evaluator.evaluate(alias_mapping[expr[:name]], row_info[:row_data])
     else
-      # Regular expression evaluation
       evaluator.evaluate(expr, row_info[:row_data])
     end
+  end
+  
+  def is_alias_reference?(expr, alias_mapping)
+    expr[:type] == :column && alias_mapping[expr[:name]]
+  end
+  
+  def apply_sort_direction(comparison, direction)
+    direction == 'DESC' ? -comparison : comparison
   end
   
   def compare_values_for_sort(a, b)
