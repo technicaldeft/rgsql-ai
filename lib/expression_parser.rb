@@ -48,6 +48,9 @@ class ExpressionParser
       when ','
         tokens << Token.new(SqlConstants::TOKEN_TYPES[:comma], ',')
         i += 1
+      when '.'
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:dot], '.')
+        i += 1
       when '+'
         tokens << Token.new(SqlConstants::TOKEN_TYPES[:plus], '+')
         i += 1
@@ -215,7 +218,23 @@ class ExpressionParser
     if match(SqlConstants::TOKEN_TYPES[:identifier])
       name = previous.value
       
-      if match(SqlConstants::TOKEN_TYPES[:lparen])
+      # Check for qualified column reference (table.column)
+      if match(SqlConstants::TOKEN_TYPES[:dot])
+        if match(SqlConstants::TOKEN_TYPES[:identifier])
+          column_name = previous.value
+          # Check for additional dots (e.g., table.column.something)
+          if match(SqlConstants::TOKEN_TYPES[:dot])
+            # Consume any remaining tokens to avoid further parsing errors
+            while !at_end?
+              advance
+            end
+            return { error: SqlConstants::ERROR_TYPES[:validation] }
+          end
+          return { type: :qualified_column, table: name, column: column_name }
+        else
+          return { error: SqlConstants::ERROR_TYPES[:parsing] }
+        end
+      elsif match(SqlConstants::TOKEN_TYPES[:lparen])
         args = parse_function_arguments
         return args if args.is_a?(Hash) && args[:error]
         return create_function_node(name, args)

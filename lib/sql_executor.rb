@@ -95,10 +95,11 @@ class SqlExecutor
       dummy_row_data = create_dummy_row_data(table_info[:columns])
       
       # Validate SELECT expressions
-      validate_select_expressions(expressions, evaluator, dummy_row_data)
+      validate_select_expressions(expressions, evaluator, dummy_row_data, table_name)
       
       # Validate WHERE clause if present
       if where_clause
+        validate_qualified_columns(where_clause, table_name)
         return validation_error unless validate_where_clause(where_clause, evaluator, dummy_row_data)
       end
       
@@ -113,6 +114,7 @@ class SqlExecutor
             return validation_error
           end
           # Validate the ORDER BY expression normally
+          validate_qualified_columns(order_by[:expression], table_name)
           evaluator.validate_types(order_by[:expression], dummy_row_data)
         end
       end
@@ -232,6 +234,8 @@ class SqlExecutor
         expr_info[:alias]
       elsif expr_info[:expression][:type] == :column
         expr_info[:expression][:name]
+      elsif expr_info[:expression][:type] == :qualified_column
+        expr_info[:expression][:column]
       else
         ''
       end
@@ -270,14 +274,14 @@ class SqlExecutor
     return false unless expr
     
     case expr[:type]
-    when :column
+    when :column, :qualified_column
       true
     when :binary_op
       contains_column_reference?(expr[:left]) || contains_column_reference?(expr[:right])
     when :unary_op
       contains_column_reference?(expr[:operand])
     when :function
-      expr[:arguments].any? { |arg| contains_column_reference?(arg) }
+      expr[:args] && expr[:args].any? { |arg| contains_column_reference?(arg) }
     else
       false
     end
@@ -337,9 +341,28 @@ class SqlExecutor
     direction == 'DESC' ? -comparison : comparison
   end
   
-  def validate_select_expressions(expressions, evaluator, dummy_row_data)
+  def validate_select_expressions(expressions, evaluator, dummy_row_data, table_name = nil)
     expressions.each do |expr_info|
+      # Validate qualified column references if present
+      validate_qualified_columns(expr_info[:expression], table_name) if table_name
       evaluator.validate_types(expr_info[:expression], dummy_row_data)
+    end
+  end
+  
+  def validate_qualified_columns(expr, table_name)
+    case expr[:type]
+    when :qualified_column
+      # Check if the table qualifier matches the current table
+      if expr[:table].downcase != table_name.downcase
+        raise ExpressionEvaluator::ValidationError, "Invalid table reference: #{expr[:table]}"
+      end
+    when :binary_op
+      validate_qualified_columns(expr[:left], table_name) if expr[:left]
+      validate_qualified_columns(expr[:right], table_name) if expr[:right]
+    when :unary_op
+      validate_qualified_columns(expr[:operand], table_name) if expr[:operand]
+    when :function
+      expr[:args].each { |arg| validate_qualified_columns(arg, table_name) } if expr[:args]
     end
   end
   

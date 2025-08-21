@@ -43,7 +43,8 @@ module SqlConstants
     abs: :abs,
     mod: :mod,
     as: :as,
-    null: :null
+    null: :null,
+    dot: :dot
   }.freeze
   
   OPERATORS = {

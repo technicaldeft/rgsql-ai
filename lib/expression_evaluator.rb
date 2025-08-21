@@ -14,6 +14,18 @@ class ExpressionEvaluator
       else
         raise ValidationError, "Unknown column: #{column_name}"
       end
+    when :qualified_column
+      table_name = expression[:table]
+      column_name = expression[:column]
+      # For now, we'll treat qualified columns the same as regular columns
+      # The validation of table name happens in the SQL executor
+      # Try case-insensitive match for column name
+      matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
+      if matching_key
+        row_data[matching_key]
+      else
+        raise ValidationError, "Unknown column: #{column_name}"
+      end
     when :binary_op
       validate_binary_op_types(expression, row_data)
     when :unary_op
@@ -33,6 +45,18 @@ class ExpressionEvaluator
       column_name = expression[:name]
       if row_data.key?(column_name)
         row_data[column_name]
+      else
+        raise ValidationError, "Unknown column: #{column_name}"
+      end
+    when :qualified_column
+      table_name = expression[:table]
+      column_name = expression[:column]
+      # For now, we'll treat qualified columns the same as regular columns
+      # The validation of table name happens in the SQL executor
+      # Try case-insensitive match for column name
+      matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
+      if matching_key
+        row_data[matching_key]
       else
         raise ValidationError, "Unknown column: #{column_name}"
       end
@@ -64,6 +88,27 @@ class ExpressionEvaluator
       column_name = expression[:name]
       if row_data.key?(column_name)
         value = row_data[column_name]
+        if value.nil?
+          nil
+        elsif value.is_a?(Integer)
+          :integer
+        elsif value == true || value == false
+          :boolean
+        else
+          :unknown
+        end
+      else
+        raise ValidationError, "Unknown column: #{column_name}"
+      end
+    when :qualified_column
+      table_name = expression[:table]
+      column_name = expression[:column]
+      # For now, we'll treat qualified columns the same as regular columns
+      # The validation of table name happens in the SQL executor
+      # Try case-insensitive match for column name
+      matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
+      if matching_key
+        value = row_data[matching_key]
         if value.nil?
           nil
         elsif value.is_a?(Integer)
