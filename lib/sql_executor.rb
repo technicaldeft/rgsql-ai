@@ -2,11 +2,14 @@ require_relative 'table_manager'
 require_relative 'boolean_converter'
 require_relative 'expression_evaluator'
 require_relative 'error_handler'
+require_relative 'row_processor'
 
 class SqlExecutor
   include ErrorHandler
   def initialize
     @table_manager = TableManager.new
+    @evaluator = ExpressionEvaluator.new
+    @row_processor = RowProcessor.new(@evaluator)
   end
   
   def execute(parsed_sql)
@@ -38,18 +41,17 @@ class SqlExecutor
       return { rows: [] }
     end
     
-    evaluator = ExpressionEvaluator.new
     values = []
     
     begin
       # First validate types
       expressions.each do |expr|
-        evaluator.validate_types(expr)
+        @evaluator.validate_types(expr)
       end
       
       # Then evaluate
       values = expressions.map do |expr|
-        value = evaluator.evaluate(expr)
+        value = @evaluator.evaluate(expr)
         BooleanConverter.convert(value)
       end
     rescue ExpressionEvaluator::DivisionByZeroError
@@ -83,7 +85,6 @@ class SqlExecutor
     all_data = @table_manager.get_all_rows(table_name)
     return all_data if has_error?(all_data)
     
-    evaluator = ExpressionEvaluator.new
     result_rows = []
     
     # Build alias mapping for ORDER BY validation
@@ -95,12 +96,12 @@ class SqlExecutor
       dummy_row_data = create_dummy_row_data(table_info[:columns])
       
       # Validate SELECT expressions
-      validate_select_expressions(expressions, evaluator, dummy_row_data, table_name)
+      validate_select_expressions(expressions, @evaluator, dummy_row_data, table_name)
       
       # Validate WHERE clause if present
       if where_clause
         validate_qualified_columns(where_clause, table_name)
-        return validation_error unless validate_where_clause(where_clause, evaluator, dummy_row_data)
+        return validation_error unless validate_where_clause(where_clause, @evaluator, dummy_row_data)
       end
       
       # Validate ORDER BY if present
@@ -115,26 +116,26 @@ class SqlExecutor
           end
           # Validate the ORDER BY expression normally
           validate_qualified_columns(order_by[:expression], table_name)
-          evaluator.validate_types(order_by[:expression], dummy_row_data)
+          @evaluator.validate_types(order_by[:expression], dummy_row_data)
         end
       end
       
       # Validate LIMIT if present
       if limit
-        return validation_error unless validate_limit_offset_expression(limit, evaluator)
+        return validation_error unless validate_limit_offset_expression(limit, @evaluator)
       end
       
       # Validate OFFSET if present
       if offset
-        return validation_error unless validate_limit_offset_expression(offset, evaluator)
+        return validation_error unless validate_limit_offset_expression(offset, @evaluator)
       end
       
       # Process rows with WHERE filtering
-      filtered_rows = filter_rows_with_where(all_data[:rows], table_info[:columns], where_clause, expressions, evaluator)
+      filtered_rows = @row_processor.filter_rows_with_where(all_data[:rows], table_info[:columns], where_clause, expressions)
       
       # Apply ORDER BY if present
       if order_by
-        sorted_rows = sort_rows(filtered_rows, order_by, alias_mapping, evaluator, table_info[:columns])
+        sorted_rows = sort_rows(filtered_rows, order_by, alias_mapping, @evaluator, table_info[:columns])
         filtered_rows = sorted_rows
       end
       
@@ -143,7 +144,7 @@ class SqlExecutor
       
       # Apply LIMIT and OFFSET
       if limit || offset
-        result_rows = apply_limit_offset(result_rows, limit, offset, evaluator)
+        result_rows = @row_processor.apply_limit_offset(result_rows, limit, offset)
       end
       
     rescue ExpressionEvaluator::DivisionByZeroError
@@ -174,15 +175,13 @@ class SqlExecutor
     table_info = @table_manager.get_table_info(table_name)
     return { error: 'validation_error' } unless table_info
     
-    evaluator = ExpressionEvaluator.new
-    
     # First, evaluate and validate all rows
     all_values = []
     begin
       value_sets.each do |expressions|
         # Evaluate each expression to get actual values
         values = expressions.map do |expr|
-          evaluator.evaluate(expr)
+          @evaluator.evaluate(expr)
         end
         
         # Validate types match table schema
@@ -220,13 +219,6 @@ class SqlExecutor
     dummy_row_data
   end
   
-  def build_row_data_hash(row, columns)
-    row_data = {}
-    columns.each_with_index do |col, idx|
-      row_data[col[:name]] = row[idx]
-    end
-    row_data
-  end
   
   def extract_column_names(expressions)
     expressions.map do |expr_info|
@@ -407,61 +399,4 @@ class SqlExecutor
     end
   end
   
-  def filter_rows_with_where(rows, columns, where_clause, expressions, evaluator)
-    filtered_rows = []
-    
-    rows.each do |row|
-      row_data = build_row_data_hash(row, columns)
-      
-      # Apply WHERE filter if present
-      if where_clause
-        where_result = evaluator.evaluate(where_clause, row_data)
-        # Only include row if WHERE evaluates to true (not false, not null)
-        next unless where_result == true
-      end
-      
-      result_row = evaluate_result_row(expressions, row_data, evaluator)
-      filtered_rows << { result: result_row, row_data: row_data }
-    end
-    
-    filtered_rows
-  end
-  
-  def evaluate_result_row(expressions, row_data, evaluator)
-    expressions.map do |expr_info|
-      value = evaluator.evaluate(expr_info[:expression], row_data)
-      BooleanConverter.convert(value)
-    end
-  end
-  
-  def apply_limit_offset(rows, limit_expr, offset_expr, evaluator)
-    # Evaluate LIMIT
-    limit_value = nil
-    if limit_expr
-      limit_value = evaluator.evaluate(limit_expr, {})
-      # NULL means no limit
-      return rows if limit_value.nil?
-      # Negative or zero limit
-      limit_value = [limit_value, 0].max
-    end
-    
-    # Evaluate OFFSET
-    offset_value = 0
-    if offset_expr
-      offset_value = evaluator.evaluate(offset_expr, {})
-      # NULL means no offset (start from 0)
-      offset_value = 0 if offset_value.nil?
-      offset_value = [offset_value, 0].max
-    end
-    
-    # Apply offset first
-    result = rows[offset_value..-1] || []
-    
-    # Then apply limit
-    if limit_value
-      result = result[0...limit_value] || []
-    end
-    
-    result
-  end
 end
