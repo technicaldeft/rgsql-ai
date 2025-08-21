@@ -85,17 +85,7 @@ class SqlExecutor
     # Validate expressions against schema even if table is empty
     begin
       # Create a dummy row with appropriate types for validation
-      dummy_row_data = {}
-      table_info[:columns].each do |col|
-        case col[:type]
-        when 'BOOLEAN'
-          dummy_row_data[col[:name]] = true
-        when 'INTEGER'
-          dummy_row_data[col[:name]] = 0
-        else
-          dummy_row_data[col[:name]] = nil
-        end
-      end
+      dummy_row_data = create_dummy_row_data(table_info[:columns])
       
       # First validate types with dummy data
       expressions.each do |expr_info|
@@ -105,10 +95,7 @@ class SqlExecutor
       # Then evaluate for real rows
       all_data[:rows].each do |row|
         # Build row data hash for column lookups
-        row_data = {}
-        table_info[:columns].each_with_index do |col, idx|
-          row_data[col[:name]] = row[idx]
-        end
+        row_data = build_row_data_hash(row, table_info[:columns])
         
         # Evaluate expressions for this row
         result_row = expressions.map do |expr_info|
@@ -124,15 +111,7 @@ class SqlExecutor
     end
     
     # Build column names from expressions or aliases
-    column_names = expressions.map do |expr_info|
-      if expr_info[:alias]
-        expr_info[:alias]
-      elsif expr_info[:expression][:type] == :column
-        expr_info[:expression][:name]
-      else
-        ''
-      end
-    end
+    column_names = extract_column_names(expressions)
     
     { rows: result_rows, columns: column_names }
   end
@@ -165,24 +144,7 @@ class SqlExecutor
         end
         
         # Validate types match table schema
-        values.each_with_index do |value, idx|
-          column = table_info[:columns][idx]
-          if column
-            # NULL is allowed for any column type
-            next if value.nil?
-            
-            case column[:type]
-            when 'INTEGER'
-              unless value.is_a?(Integer)
-                return validation_error
-              end
-            when 'BOOLEAN'
-              unless [true, false].include?(value)
-                return validation_error
-              end
-            end
-          end
-        end
+        return validation_error unless validate_row_types(values, table_info[:columns])
         
         all_values << values
       end
@@ -199,5 +161,58 @@ class SqlExecutor
     end
     
     ok_status
+  end
+  
+  def create_dummy_row_data(columns)
+    dummy_row_data = {}
+    columns.each do |col|
+      case col[:type]
+      when 'BOOLEAN'
+        dummy_row_data[col[:name]] = true
+      when 'INTEGER'
+        dummy_row_data[col[:name]] = 0
+      else
+        dummy_row_data[col[:name]] = nil
+      end
+    end
+    dummy_row_data
+  end
+  
+  def build_row_data_hash(row, columns)
+    row_data = {}
+    columns.each_with_index do |col, idx|
+      row_data[col[:name]] = row[idx]
+    end
+    row_data
+  end
+  
+  def extract_column_names(expressions)
+    expressions.map do |expr_info|
+      if expr_info[:alias]
+        expr_info[:alias]
+      elsif expr_info[:expression][:type] == :column
+        expr_info[:expression][:name]
+      else
+        ''
+      end
+    end
+  end
+  
+  def validate_row_types(values, columns)
+    values.each_with_index do |value, idx|
+      column = columns[idx]
+      if column
+        # NULL is allowed for any column type
+        next if value.nil?
+        
+        case column[:type]
+        when 'INTEGER'
+          return false unless value.is_a?(Integer)
+        when 'BOOLEAN'
+          return false unless [true, false].include?(value)
+        end
+      end
+    end
+    true
   end
 end
