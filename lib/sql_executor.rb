@@ -95,19 +95,11 @@ class SqlExecutor
       dummy_row_data = create_dummy_row_data(table_info[:columns])
       
       # Validate SELECT expressions
-      expressions.each do |expr_info|
-        evaluator.validate_types(expr_info[:expression], dummy_row_data)
-      end
+      validate_select_expressions(expressions, evaluator, dummy_row_data)
       
       # Validate WHERE clause if present
       if where_clause
-        evaluator.validate_types(where_clause, dummy_row_data)
-        
-        # Check that WHERE clause evaluates to boolean or NULL
-        where_type = evaluator.get_expression_type(where_clause, dummy_row_data)
-        unless where_type == :boolean || where_type.nil?
-          return validation_error
-        end
+        return validation_error unless validate_where_clause(where_clause, evaluator, dummy_row_data)
       end
       
       # Validate ORDER BY if present
@@ -127,30 +119,12 @@ class SqlExecutor
       
       # Validate LIMIT if present
       if limit
-        # LIMIT cannot contain column references
-        if contains_column_reference?(limit)
-          return validation_error
-        end
-        
-        evaluator.validate_types(limit, {})
-        limit_type = evaluator.get_expression_type(limit, {})
-        unless limit_type == :integer || limit_type.nil?
-          return validation_error
-        end
+        return validation_error unless validate_limit_offset_expression(limit, evaluator)
       end
       
       # Validate OFFSET if present
       if offset
-        # OFFSET cannot contain column references
-        if contains_column_reference?(offset)
-          return validation_error
-        end
-        
-        evaluator.validate_types(offset, {})
-        offset_type = evaluator.get_expression_type(offset, {})
-        unless offset_type == :integer || offset_type.nil?
-          return validation_error
-        end
+        return validation_error unless validate_limit_offset_expression(offset, evaluator)
       end
       
       # Process rows with WHERE filtering
@@ -361,6 +335,29 @@ class SqlExecutor
   
   def apply_sort_direction(comparison, direction)
     direction == 'DESC' ? -comparison : comparison
+  end
+  
+  def validate_select_expressions(expressions, evaluator, dummy_row_data)
+    expressions.each do |expr_info|
+      evaluator.validate_types(expr_info[:expression], dummy_row_data)
+    end
+  end
+  
+  def validate_where_clause(where_clause, evaluator, dummy_row_data)
+    evaluator.validate_types(where_clause, dummy_row_data)
+    
+    # Check that WHERE clause evaluates to boolean or NULL
+    where_type = evaluator.get_expression_type(where_clause, dummy_row_data)
+    where_type == :boolean || where_type.nil?
+  end
+  
+  def validate_limit_offset_expression(expr, evaluator)
+    # Cannot contain column references
+    return false if contains_column_reference?(expr)
+    
+    evaluator.validate_types(expr, {})
+    expr_type = evaluator.get_expression_type(expr, {})
+    expr_type == :integer || expr_type.nil?
   end
   
   def compare_values_for_sort(a, b)
