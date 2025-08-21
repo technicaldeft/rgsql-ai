@@ -23,7 +23,7 @@ module SelectParser
     select_list = match[1].strip
     table_name = match[2]
     
-    expressions = parse_select_expressions(select_list)
+    expressions = parse_expression_list(select_list)
     return expressions if is_error?(expressions)
     
     { type: :select_from, table_name: table_name, expressions: expressions }
@@ -38,42 +38,16 @@ module SelectParser
     
     select_list = match[1].strip
     
-    result = parse_select_list(select_list)
-    return result if is_error?(result)
+    parsed_items = parse_expression_list(select_list)
+    return parsed_items if is_error?(parsed_items)
     
-    { type: :select, expressions: result[:expressions], columns: result[:columns] }
+    expressions = parsed_items.map { |item| item[:expression] }
+    columns = parsed_items.map { |item| item[:alias] }
+    
+    { type: :select, expressions: expressions, columns: columns }
   end
   
-  def parse_select_list(select_list)
-    return { expressions: [], columns: [] } if select_list.empty?
-    
-    parts = split_on_comma(select_list)
-    expressions = []
-    columns = []
-    
-    parts.each do |part|
-      parsed_value = parse_select_item(part)
-      return parsed_value if is_error?(parsed_value)
-      
-      expressions << parsed_value[:expression]
-      columns << parsed_value[:column]
-    end
-    
-    { expressions: expressions, columns: columns }
-  end
-  
-  def parse_select_item(expression)
-    expr_str, column_alias = extract_alias(expression)
-    
-    parser = ExpressionParser.new
-    parsed_expr = parser.parse(expr_str)
-    
-    return parsed_expr if is_error?(parsed_expr)
-    
-    { expression: parsed_expr, column: column_alias }
-  end
-  
-  def parse_select_expressions(select_list)
+  def parse_expression_list(select_list)
     return [] if select_list.empty?
     
     parts = split_on_comma(select_list)
