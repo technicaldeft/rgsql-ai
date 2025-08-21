@@ -1,16 +1,19 @@
+require_relative 'error_handler'
+
 class TableManager
+  include ErrorHandler
   def initialize
     @tables = {}
   end
   
   def create_table(name, columns)
     if @tables.key?(name)
-      return { error: 'validation_error' }
+      return validation_error
     end
     
     column_names = columns.map { |col| col[:name] }
     if column_names.uniq.length != column_names.length
-      return { error: 'validation_error' }
+      return validation_error
     end
     
     @tables[name] = {
@@ -18,16 +21,16 @@ class TableManager
       rows: []
     }
     
-    { status: 'ok' }
+    ok_status
   end
   
   def drop_table(name, if_exists: false)
     if !@tables.key?(name)
-      return if_exists ? { status: 'ok' } : { error: 'validation_error' }
+      return if_exists ? ok_status : validation_error
     end
     
     @tables.delete(name)
-    { status: 'ok' }
+    ok_status
   end
   
   def table_exists?(name)
@@ -43,11 +46,11 @@ class TableManager
     return { error: 'validation_error' } unless table
     
     if values.length != table[:columns].length
-      return { error: 'validation_error' }
+      return validation_error
     end
     
     table[:rows] << values
-    { status: 'ok' }
+    ok_status
   end
   
   def select_from_table(table_name, column_names)
@@ -56,7 +59,7 @@ class TableManager
     
     column_indices = column_names.map do |col_name|
       index = table[:columns].find_index { |col| col[:name] == col_name }
-      return { error: 'validation_error' } unless index
+      return validation_error unless index
       index
     end
     

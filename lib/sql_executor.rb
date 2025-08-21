@@ -1,8 +1,10 @@
 require_relative 'table_manager'
 require_relative 'boolean_converter'
 require_relative 'expression_evaluator'
+require_relative 'error_handler'
 
 class SqlExecutor
+  include ErrorHandler
   def initialize
     @table_manager = TableManager.new
   end
@@ -22,15 +24,11 @@ class SqlExecutor
     when :insert_multiple
       execute_insert_multiple(parsed_sql)
     else
-      { error: 'unknown_command' }
+      unknown_command_error
     end
   end
   
   private
-  
-  def has_error?(result)
-    result.is_a?(Hash) && result[:error]
-  end
   
   def execute_select(parsed_sql)
     expressions = parsed_sql[:expressions]
@@ -55,9 +53,9 @@ class SqlExecutor
         BooleanConverter.convert(value)
       end
     rescue ExpressionEvaluator::DivisionByZeroError
-      return { error: 'division_by_zero_error' }
+      return division_by_zero_error
     rescue ExpressionEvaluator::ValidationError
-      return { error: 'validation_error' }
+      return validation_error
     end
     
     result = { rows: [values] }
@@ -120,9 +118,9 @@ class SqlExecutor
         result_rows << result_row
       end
     rescue ExpressionEvaluator::DivisionByZeroError
-      return { error: 'division_by_zero_error' }
+      return division_by_zero_error
     rescue ExpressionEvaluator::ValidationError
-      return { error: 'validation_error' }
+      return validation_error
     end
     
     # Build column names from expressions or aliases
@@ -173,11 +171,11 @@ class SqlExecutor
             case column[:type]
             when 'INTEGER'
               unless value.is_a?(Integer)
-                return { error: 'validation_error' }
+                return validation_error
               end
             when 'BOOLEAN'
               unless [true, false].include?(value)
-                return { error: 'validation_error' }
+                return validation_error
               end
             end
           end
@@ -186,9 +184,9 @@ class SqlExecutor
         all_values << values
       end
     rescue ExpressionEvaluator::DivisionByZeroError
-      return { error: 'division_by_zero_error' }
+      return division_by_zero_error
     rescue ExpressionEvaluator::ValidationError
-      return { error: 'validation_error' }
+      return validation_error
     end
     
     # Only insert if all rows are valid
@@ -197,6 +195,6 @@ class SqlExecutor
       return result if has_error?(result)
     end
     
-    { status: 'ok' }
+    ok_status
   end
 end
