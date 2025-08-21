@@ -397,16 +397,18 @@ class SqlExecutor
         next unless where_result == true
       end
       
-      # Store both the row data and the evaluated SELECT expressions
-      result_row = expressions.map do |expr_info|
-        value = evaluator.evaluate(expr_info[:expression], row_data)
-        BooleanConverter.convert(value)
-      end
-      
+      result_row = evaluate_result_row(expressions, row_data, evaluator)
       filtered_rows << { result: result_row, row_data: row_data }
     end
     
     filtered_rows
+  end
+  
+  def evaluate_result_row(expressions, row_data, evaluator)
+    expressions.map do |expr_info|
+      value = evaluator.evaluate(expr_info[:expression], row_data)
+      BooleanConverter.convert(value)
+    end
   end
   
   def apply_limit_offset(rows, limit_expr, offset_expr, evaluator)
