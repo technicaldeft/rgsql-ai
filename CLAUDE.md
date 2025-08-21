@@ -32,6 +32,7 @@ You will be asked to make all the tests in a file pass.
 You may be asked to refactor the code in order to make it easier to understand and extend.
 
 + Think about what refactors to implement and the pros and cons of each.
++ Look for refactors that extract concepts or create abstractions that simplify the code.
 + Avoid premature optimization and architecting of code until there is a need to.
 + It's fine not to perform any refactors, or to save refactoring ideas for later.
 + You MUST create a DIFFERENT commit each refactor. Do NOT put multiple refactors in a single commit
