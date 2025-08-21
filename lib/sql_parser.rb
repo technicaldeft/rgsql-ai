@@ -1,15 +1,15 @@
-require_relative 'boolean_converter'
 require_relative 'parsing_utils'
-require_relative 'expression_parser'
 require_relative 'sql_constants'
 require_relative 'select_parser'
 require_relative 'value_list_parser'
+require_relative 'table_parser'
 
 class SqlParser
   include ParsingUtils
   include SqlConstants
   include SelectParser
   include ValueListParser
+  include TableParser
   
   def parse(sql)
     sql = sql.strip
@@ -40,15 +40,6 @@ class SqlParser
     first_word[1].upcase
   end
   
-  def is_reserved_keyword?(name)
-    SqlConstants::RESERVED_KEYWORDS.include?(name.upcase)
-  end
-  
-  def validate_identifier(name)
-    return parse_error if is_reserved_keyword?(name)
-    return parse_error unless name.match(/\A#{SqlConstants::PATTERNS[:identifier]}\z/)
-    true
-  end
   
   def parse_select(sql)
     # Check for SELECT with FROM clause first
@@ -89,59 +80,6 @@ class SqlParser
     parse_select_item(expression)
   end
   
-  def parse_create_table(sql)
-    match = sql.match(/\ACREATE\s+TABLE\s+(#{SqlConstants::PATTERNS[:identifier]})\s*\((.*?)\)\s*;?\s*\z/im)
-    return parse_error unless match
-    
-    table_name = match[1]
-    columns_str = match[2]
-    
-    # Check if table name is a reserved keyword
-    return parse_error if is_reserved_keyword?(table_name)
-    
-    columns = parse_column_definitions(columns_str)
-    return columns if columns.is_a?(Hash) && columns[:error]
-    
-    { type: :create_table, table_name: table_name, columns: columns }
-  end
-  
-  def parse_column_definitions(columns_str)
-    column_parts = split_column_list(columns_str)
-    columns = []
-    
-    column_parts.each do |part|
-      column = parse_single_column_definition(part)
-      return column if column.is_a?(Hash) && column[:error]
-      columns << column
-    end
-    
-    columns
-  end
-  
-  def parse_single_column_definition(column_def)
-    column_def = column_def.strip
-    match = column_def.match(/\A(#{SqlConstants::PATTERNS[:identifier]})\s+(#{SqlConstants::DATA_TYPES.join('|')})\z/i)
-    return parse_error unless match
-    
-    column_name = match[1]
-    return parse_error if is_reserved_keyword?(column_name)
-    
-    { name: column_name, type: match[2].upcase }
-  end
-  
-  def split_column_list(columns_str)
-    split_on_comma(columns_str)
-  end
-  
-  def parse_drop_table(sql)
-    if match = sql.match(/\ADROP\s+TABLE\s+IF\s+EXISTS\s+(#{SqlConstants::PATTERNS[:identifier]})\s*;?\s*\z/i)
-      { type: :drop_table, table_name: match[1], if_exists: true }
-    elsif match = sql.match(/\ADROP\s+TABLE\s+(#{SqlConstants::PATTERNS[:identifier]})\s*;?\s*\z/i)
-      { type: :drop_table, table_name: match[1], if_exists: false }
-    else
-      parse_error
-    end
-  end
   
   def parse_insert(sql)
     # Handle multiple value sets: VALUES (1, 2), (3, 4)
