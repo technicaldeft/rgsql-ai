@@ -3,11 +3,13 @@ require_relative 'parsing_utils'
 require_relative 'expression_parser'
 require_relative 'sql_constants'
 require_relative 'select_parser'
+require_relative 'value_list_parser'
 
 class SqlParser
   include ParsingUtils
   include SqlConstants
   include SelectParser
+  include ValueListParser
   
   def parse(sql)
     sql = sql.strip
@@ -147,41 +149,12 @@ class SqlParser
     return parse_error unless match
     
     table_name = match[1]
-    values_clause = match[2].strip
+    values_clause = match[2]
     
-    # Extract all value sets - handle nested parentheses properly
-    groups = extract_parenthesized_groups(values_clause)
-    value_sets = []
-    
-    groups.each do |group|
-      values = parse_value_list(group)
-      return values if is_error?(values)
-      value_sets << values
-    end
-    
-    return parse_error if value_sets.empty?
+    value_sets = parse_multiple_value_sets(values_clause)
+    return value_sets if is_error?(value_sets)
     
     { type: :insert_multiple, table_name: table_name, value_sets: value_sets }
   end
   
-  def parse_value_list(values_str)
-    return [] if values_str.strip.empty?
-    
-    parts = split_on_comma(values_str)
-    values = []
-    
-    parts.each do |part|
-      part = part.strip
-      
-      # Parse as expression
-      parser = ExpressionParser.new
-      parsed_expr = parser.parse(part)
-      
-      return parsed_expr if parsed_expr[:error]
-      
-      values << parsed_expr
-    end
-    
-    values
-  end
 end
