@@ -6,6 +6,44 @@ module SelectParser
   include SqlConstants
   include ParsingUtils
   
+  def parse_select(sql)
+    if sql.match(/\bFROM\b/i)
+      parse_select_from(sql)
+    else
+      parse_simple_select(sql)
+    end
+  end
+  
+  private
+  
+  def parse_select_from(sql)
+    match = sql.match(/\ASELECT#{PATTERNS[:whitespace]}(.*?)#{PATTERNS[:whitespace]}FROM#{PATTERNS[:whitespace]}(#{PATTERNS[:identifier]})#{PATTERNS[:optional_whitespace]}#{PATTERNS[:optional_semicolon]}/im)
+    return parse_error unless match
+    
+    select_list = match[1].strip
+    table_name = match[2]
+    
+    expressions = parse_select_expressions(select_list)
+    return expressions if is_error?(expressions)
+    
+    { type: :select_from, table_name: table_name, expressions: expressions }
+  end
+  
+  def parse_simple_select(sql)
+    match = sql.match(/\ASELECT#{PATTERNS[:optional_whitespace]}(.*?)#{PATTERNS[:optional_semicolon]}/im)
+    return parse_error unless match
+    
+    remainder = sql[match.end(0)..-1].strip
+    return parse_error unless remainder.empty?
+    
+    select_list = match[1].strip
+    
+    result = parse_select_list(select_list)
+    return result if is_error?(result)
+    
+    { type: :select, expressions: result[:expressions], columns: result[:columns] }
+  end
+  
   def parse_select_list(select_list)
     return { expressions: [], columns: [] } if select_list.empty?
     
