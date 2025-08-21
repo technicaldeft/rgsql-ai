@@ -1,48 +1,10 @@
 require_relative 'boolean_converter'
+require_relative 'sql_constants'
 
 class ExpressionParser
-  PARSING_ERROR = 'parsing_error'
+  include SqlConstants
   
   Token = Struct.new(:type, :value)
-  
-  # Token types
-  TOKEN_LPAREN = :lparen
-  TOKEN_RPAREN = :rparen
-  TOKEN_COMMA = :comma
-  TOKEN_PLUS = :plus
-  TOKEN_MINUS = :minus
-  TOKEN_STAR = :star
-  TOKEN_SLASH = :slash
-  TOKEN_LT = :lt
-  TOKEN_LTE = :lte
-  TOKEN_GT = :gt
-  TOKEN_GTE = :gte
-  TOKEN_EQUAL = :equal
-  TOKEN_NOT_EQUAL = :not_equal
-  TOKEN_INTEGER = :integer
-  TOKEN_BOOLEAN = :boolean
-  TOKEN_IDENTIFIER = :identifier
-  TOKEN_NOT = :not
-  TOKEN_AND = :and
-  TOKEN_OR = :or
-  TOKEN_ABS = :abs
-  TOKEN_MOD = :mod
-  TOKEN_AS = :as
-  
-  # Operator symbols for AST
-  OP_PLUS = :plus
-  OP_MINUS = :minus
-  OP_STAR = :star
-  OP_SLASH = :slash
-  OP_LT = :lt
-  OP_GT = :gt
-  OP_LTE = :lte
-  OP_GTE = :gte
-  OP_EQUAL = :equal
-  OP_NOT_EQUAL = :not_equal
-  OP_AND = :and
-  OP_OR = :or
-  OP_NOT = :not
   
   def initialize
     @tokens = []
@@ -52,17 +14,17 @@ class ExpressionParser
   def parse(expression)
     @tokens = tokenize(expression)
     @current = 0
-    return { error: PARSING_ERROR } if @tokens.empty?
+    return { error: SqlConstants::ERROR_TYPES[:parsing] } if @tokens.empty?
     
     result = parse_or_expression
     
     if !at_end?
-      return { error: PARSING_ERROR }
+      return { error: SqlConstants::ERROR_TYPES[:parsing] }
     end
     
     result
   rescue
-    { error: PARSING_ERROR }
+    { error: SqlConstants::ERROR_TYPES[:parsing] }
   end
   
   private
@@ -78,54 +40,54 @@ class ExpressionParser
       when ' ', "\t", "\n", "\r"
         i += 1
       when '('
-        tokens << Token.new(TOKEN_LPAREN, '(')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:lparen], '(')
         i += 1
       when ')'
-        tokens << Token.new(TOKEN_RPAREN, ')')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:rparen], ')')
         i += 1
       when ','
-        tokens << Token.new(TOKEN_COMMA, ',')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:comma], ',')
         i += 1
       when '+'
-        tokens << Token.new(TOKEN_PLUS, '+')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:plus], '+')
         i += 1
       when '-'
-        tokens << Token.new(TOKEN_MINUS, '-')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:minus], '-')
         i += 1
       when '*'
-        tokens << Token.new(TOKEN_STAR, '*')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:star], '*')
         i += 1
       when '/'
-        tokens << Token.new(TOKEN_SLASH, '/')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:slash], '/')
         i += 1
       when '<'
         if i + 1 < expression.length && expression[i + 1] == '='
-          tokens << Token.new(TOKEN_LTE, '<=')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:lte], '<=')
           i += 2
         elsif i + 1 < expression.length && expression[i + 1] == '>'
-          tokens << Token.new(TOKEN_NOT_EQUAL, '<>')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:not_equal], '<>')
           i += 2
         else
-          tokens << Token.new(TOKEN_LT, '<')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:lt], '<')
           i += 1
         end
       when '>'
         if i + 1 < expression.length && expression[i + 1] == '='
-          tokens << Token.new(TOKEN_GTE, '>=')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:gte], '>=')
           i += 2
         else
-          tokens << Token.new(TOKEN_GT, '>')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:gt], '>')
           i += 1
         end
       when '='
-        tokens << Token.new(TOKEN_EQUAL, '=')
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:equal], '=')
         i += 1
       when /[0-9]/
         j = i
         while j < expression.length && expression[j] =~ /[0-9]/
           j += 1
         end
-        tokens << Token.new(TOKEN_INTEGER, expression[i...j].to_i)
+        tokens << Token.new(SqlConstants::TOKEN_TYPES[:integer], expression[i...j].to_i)
         i = j
       when /[a-zA-Z]/
         j = i
@@ -136,23 +98,23 @@ class ExpressionParser
         
         case word.upcase
         when 'TRUE'
-          tokens << Token.new(TOKEN_BOOLEAN, true)
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:boolean], true)
         when 'FALSE'
-          tokens << Token.new(TOKEN_BOOLEAN, false)
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:boolean], false)
         when 'NOT'
-          tokens << Token.new(TOKEN_NOT, 'NOT')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:not], 'NOT')
         when 'AND'
-          tokens << Token.new(TOKEN_AND, 'AND')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:and], 'AND')
         when 'OR'
-          tokens << Token.new(TOKEN_OR, 'OR')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:or], 'OR')
         when 'ABS'
-          tokens << Token.new(TOKEN_ABS, 'ABS')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:abs], 'ABS')
         when 'MOD'
-          tokens << Token.new(TOKEN_MOD, 'MOD')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:mod], 'MOD')
         when 'AS'
-          tokens << Token.new(TOKEN_AS, 'AS')
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:as], 'AS')
         else
-          tokens << Token.new(TOKEN_IDENTIFIER, word)
+          tokens << Token.new(SqlConstants::TOKEN_TYPES[:identifier], word)
         end
         i = j
       else
@@ -167,10 +129,10 @@ class ExpressionParser
     expr = parse_and_expression
     return expr if expr[:error]
     
-    while match(TOKEN_OR)
+    while match(SqlConstants::TOKEN_TYPES[:or])
       right = parse_and_expression
       return right if right[:error]
-      expr = { type: :binary_op, operator: OP_OR, left: expr, right: right }
+      expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:or], left: expr, right: right }
     end
     
     expr
@@ -180,10 +142,10 @@ class ExpressionParser
     expr = parse_comparison
     return expr if expr[:error]
     
-    while match(TOKEN_AND)
+    while match(SqlConstants::TOKEN_TYPES[:and])
       right = parse_comparison
       return right if right[:error]
-      expr = { type: :binary_op, operator: OP_AND, left: expr, right: right }
+      expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:and], left: expr, right: right }
     end
     
     expr
@@ -193,30 +155,30 @@ class ExpressionParser
     expr = parse_addition
     return expr if expr[:error]
     
-    if match(TOKEN_LT)
+    if match(SqlConstants::TOKEN_TYPES[:lt])
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: OP_LT, left: expr, right: right }
-    elsif match(TOKEN_GT)
+      return { type: :binary_op, operator: SqlConstants::OPERATORS[:lt], left: expr, right: right }
+    elsif match(SqlConstants::TOKEN_TYPES[:gt])
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: OP_GT, left: expr, right: right }
-    elsif match(TOKEN_LTE)
+      return { type: :binary_op, operator: SqlConstants::OPERATORS[:gt], left: expr, right: right }
+    elsif match(SqlConstants::TOKEN_TYPES[:lte])
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: OP_LTE, left: expr, right: right }
-    elsif match(TOKEN_GTE)
+      return { type: :binary_op, operator: SqlConstants::OPERATORS[:lte], left: expr, right: right }
+    elsif match(SqlConstants::TOKEN_TYPES[:gte])
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: OP_GTE, left: expr, right: right }
-    elsif match(TOKEN_EQUAL)
+      return { type: :binary_op, operator: SqlConstants::OPERATORS[:gte], left: expr, right: right }
+    elsif match(SqlConstants::TOKEN_TYPES[:equal])
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: OP_EQUAL, left: expr, right: right }
-    elsif match(TOKEN_NOT_EQUAL)
+      return { type: :binary_op, operator: SqlConstants::OPERATORS[:equal], left: expr, right: right }
+    elsif match(SqlConstants::TOKEN_TYPES[:not_equal])
       right = parse_addition
       return right if right[:error]
-      return { type: :binary_op, operator: OP_NOT_EQUAL, left: expr, right: right }
+      return { type: :binary_op, operator: SqlConstants::OPERATORS[:not_equal], left: expr, right: right }
     end
     
     expr
@@ -227,14 +189,14 @@ class ExpressionParser
     return expr if expr[:error]
     
     while true
-      if match(TOKEN_PLUS)
+      if match(SqlConstants::TOKEN_TYPES[:plus])
         right = parse_multiplication
         return right if right[:error]
-        expr = { type: :binary_op, operator: OP_PLUS, left: expr, right: right }
-      elsif match(TOKEN_MINUS)
+        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:plus], left: expr, right: right }
+      elsif match(SqlConstants::TOKEN_TYPES[:minus])
         right = parse_multiplication
         return right if right[:error]
-        expr = { type: :binary_op, operator: OP_MINUS, left: expr, right: right }
+        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:minus], left: expr, right: right }
       else
         break
       end
@@ -248,14 +210,14 @@ class ExpressionParser
     return expr if expr[:error]
     
     while true
-      if match(TOKEN_STAR)
+      if match(SqlConstants::TOKEN_TYPES[:star])
         right = parse_unary
         return right if right[:error]
-        expr = { type: :binary_op, operator: OP_STAR, left: expr, right: right }
-      elsif match(TOKEN_SLASH)
+        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:star], left: expr, right: right }
+      elsif match(SqlConstants::TOKEN_TYPES[:slash])
         right = parse_unary
         return right if right[:error]
-        expr = { type: :binary_op, operator: OP_SLASH, left: expr, right: right }
+        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:slash], left: expr, right: right }
       else
         break
       end
@@ -265,43 +227,43 @@ class ExpressionParser
   end
   
   def parse_unary
-    if match(TOKEN_NOT)
+    if match(SqlConstants::TOKEN_TYPES[:not])
       expr = parse_unary
       return expr if expr[:error]
-      return { type: :unary_op, operator: OP_NOT, operand: expr }
-    elsif match(TOKEN_MINUS)
+      return { type: :unary_op, operator: SqlConstants::OPERATORS[:not], operand: expr }
+    elsif match(SqlConstants::TOKEN_TYPES[:minus])
       expr = parse_unary
       return expr if expr[:error]
-      return { type: :unary_op, operator: OP_MINUS, operand: expr }
+      return { type: :unary_op, operator: SqlConstants::OPERATORS[:minus], operand: expr }
     end
     
     parse_primary
   end
   
   def parse_primary
-    if match(TOKEN_INTEGER)
+    if match(SqlConstants::TOKEN_TYPES[:integer])
       return { type: :literal, value: previous.value }
     end
     
-    if match(TOKEN_BOOLEAN)
+    if match(SqlConstants::TOKEN_TYPES[:boolean])
       return { type: :literal, value: previous.value }
     end
     
-    if match(TOKEN_IDENTIFIER)
+    if match(SqlConstants::TOKEN_TYPES[:identifier])
       name = previous.value
       
-      if match(TOKEN_LPAREN)
+      if match(SqlConstants::TOKEN_TYPES[:lparen])
         # Parse as a function call - parse arguments generically
         args = []
-        unless check(TOKEN_RPAREN)
+        unless check(SqlConstants::TOKEN_TYPES[:rparen])
           loop do
             arg = parse_or_expression
             return arg if arg[:error]
             args << arg
-            break unless match(TOKEN_COMMA)
+            break unless match(SqlConstants::TOKEN_TYPES[:comma])
           end
         end
-        return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
+        return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
         
         # Return the function with the appropriate name
         case name.upcase
@@ -317,42 +279,42 @@ class ExpressionParser
       end
     end
     
-    if match(TOKEN_ABS) && match(TOKEN_LPAREN)
+    if match(SqlConstants::TOKEN_TYPES[:abs]) && match(SqlConstants::TOKEN_TYPES[:lparen])
       args = []
-      unless check(TOKEN_RPAREN)
+      unless check(SqlConstants::TOKEN_TYPES[:rparen])
         loop do
           arg = parse_or_expression
           return arg if arg[:error]
           args << arg
-          break unless match(TOKEN_COMMA)
+          break unless match(SqlConstants::TOKEN_TYPES[:comma])
         end
       end
-      return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
+      return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
       return { type: :function, name: :abs, args: args }
     end
     
-    if match(TOKEN_MOD) && match(TOKEN_LPAREN)
+    if match(SqlConstants::TOKEN_TYPES[:mod]) && match(SqlConstants::TOKEN_TYPES[:lparen])
       args = []
-      unless check(TOKEN_RPAREN)
+      unless check(SqlConstants::TOKEN_TYPES[:rparen])
         loop do
           arg = parse_or_expression
           return arg if arg[:error]
           args << arg
-          break unless match(TOKEN_COMMA)
+          break unless match(SqlConstants::TOKEN_TYPES[:comma])
         end
       end
-      return { error: PARSING_ERROR } unless match(TOKEN_RPAREN)
+      return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
       return { type: :function, name: :mod, args: args }
     end
     
-    if match(TOKEN_LPAREN)
+    if match(SqlConstants::TOKEN_TYPES[:lparen])
       expr = parse_or_expression
       return expr if expr[:error]
-      return { error: PARSING_ERROR } unless match(:rparen)
+      return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
       return expr
     end
     
-    { error: PARSING_ERROR }
+    { error: SqlConstants::ERROR_TYPES[:parsing] }
   end
   
   def match(*types)

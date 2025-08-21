@@ -1,4 +1,7 @@
+require_relative 'sql_constants'
+
 module ParsingUtils
+  include SqlConstants
   def split_on_comma(text)
     return [] if text.strip.empty?
     
@@ -51,7 +54,7 @@ module ParsingUtils
   end
   
   def parse_error
-    { error: 'parsing_error' }
+    { error: SqlConstants::ERROR_TYPES[:parsing] }
   end
   
   def is_error?(result)

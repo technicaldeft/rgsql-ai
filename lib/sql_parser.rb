@@ -1,35 +1,11 @@
 require_relative 'boolean_converter'
 require_relative 'parsing_utils'
 require_relative 'expression_parser'
+require_relative 'sql_constants'
 
 class SqlParser
   include ParsingUtils
-  PARSING_ERROR = 'parsing_error'
-  
-  # Regex patterns for parsing
-  IDENTIFIER_PATTERN = /[a-zA-Z_][a-zA-Z0-9_]*/
-  INTEGER_PATTERN = /-?\d+/
-  WHITESPACE = /\s+/
-  OPTIONAL_WHITESPACE = /\s*/
-  OPTIONAL_SEMICOLON = /;?\s*\z/
-  
-  # Multiline regex flags
-  MULTILINE_FLAGS = /im/
-  
-  # Reserved SQL keywords
-  RESERVED_KEYWORDS = %w[
-    SELECT FROM CREATE TABLE DROP INSERT INTO VALUES
-    INTEGER BOOLEAN AS IF EXISTS
-  ].freeze
-  
-  # SQL data types
-  DATA_TYPES = %w[INTEGER BOOLEAN].freeze
-  
-  # Statement types
-  STATEMENT_SELECT = 'SELECT'.freeze
-  STATEMENT_CREATE = 'CREATE'.freeze
-  STATEMENT_DROP = 'DROP'.freeze
-  STATEMENT_INSERT = 'INSERT'.freeze
+  include SqlConstants
   
   def parse(sql)
     sql = sql.strip
@@ -39,13 +15,13 @@ class SqlParser
     return parse_error unless statement_type
     
     case statement_type
-    when STATEMENT_SELECT
+    when SqlConstants::STATEMENT_TYPES[:select]
       parse_select(sql)
-    when STATEMENT_CREATE
+    when SqlConstants::STATEMENT_TYPES[:create]
       parse_create_table(sql)
-    when STATEMENT_DROP
+    when SqlConstants::STATEMENT_TYPES[:drop]
       parse_drop_table(sql)
-    when STATEMENT_INSERT
+    when SqlConstants::STATEMENT_TYPES[:insert]
       parse_insert(sql)
     else
       parse_error
@@ -61,19 +37,19 @@ class SqlParser
   end
   
   def is_reserved_keyword?(name)
-    RESERVED_KEYWORDS.include?(name.upcase)
+    SqlConstants::RESERVED_KEYWORDS.include?(name.upcase)
   end
   
   def validate_identifier(name)
     return parse_error if is_reserved_keyword?(name)
-    return parse_error unless name.match(/\A#{IDENTIFIER_PATTERN}\z/)
+    return parse_error unless name.match(/\A#{SqlConstants::PATTERNS[:identifier]}\z/)
     true
   end
   
   def parse_select(sql)
     # Check for SELECT with FROM clause first
     if sql.match(/\bFROM\b/i)
-      match = sql.match(/\ASELECT#{WHITESPACE}(.*?)#{WHITESPACE}FROM#{WHITESPACE}(#{IDENTIFIER_PATTERN})#{OPTIONAL_WHITESPACE}#{OPTIONAL_SEMICOLON}/im)
+      match = sql.match(/\ASELECT#{SqlConstants::PATTERNS[:whitespace]}(.*?)#{SqlConstants::PATTERNS[:whitespace]}FROM#{SqlConstants::PATTERNS[:whitespace]}(#{SqlConstants::PATTERNS[:identifier]})#{SqlConstants::PATTERNS[:optional_whitespace]}#{SqlConstants::PATTERNS[:optional_semicolon]}/im)
       return parse_error unless match
       
       select_list = match[1].strip
@@ -86,7 +62,7 @@ class SqlParser
     end
     
     # Original SELECT without FROM
-    match = sql.match(/\ASELECT#{OPTIONAL_WHITESPACE}(.*?)#{OPTIONAL_SEMICOLON}/im)
+    match = sql.match(/\ASELECT#{SqlConstants::PATTERNS[:optional_whitespace]}(.*?)#{SqlConstants::PATTERNS[:optional_semicolon]}/im)
     
     return parse_error unless match
     
@@ -123,7 +99,7 @@ class SqlParser
       part = part.strip
       
       # Check for AS alias
-      alias_match = part.match(/(.+?)\s+AS\s+(#{IDENTIFIER_PATTERN})\s*\z/i)
+      alias_match = part.match(/(.+?)\s+AS\s+(#{SqlConstants::PATTERNS[:identifier]})\s*\z/i)
       
       if alias_match
         expr_str = alias_match[1].strip
@@ -147,7 +123,7 @@ class SqlParser
   
   def parse_select_value(expression)
     # Check for AS alias
-    alias_match = expression.match(/(.+?)\s+AS\s+(#{IDENTIFIER_PATTERN})\s*\z/i)
+    alias_match = expression.match(/(.+?)\s+AS\s+(#{SqlConstants::PATTERNS[:identifier]})\s*\z/i)
     
     if alias_match
       expr_str = alias_match[1].strip
@@ -167,7 +143,7 @@ class SqlParser
   end
   
   def parse_create_table(sql)
-    match = sql.match(/\ACREATE\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*\((.*?)\)\s*;?\s*\z/im)
+    match = sql.match(/\ACREATE\s+TABLE\s+(#{SqlConstants::PATTERNS[:identifier]})\s*\((.*?)\)\s*;?\s*\z/im)
     return parse_error unless match
     
     table_name = match[1]
@@ -197,7 +173,7 @@ class SqlParser
   
   def parse_single_column_definition(column_def)
     column_def = column_def.strip
-    match = column_def.match(/\A(#{IDENTIFIER_PATTERN})\s+(#{DATA_TYPES.join('|')})\z/i)
+    match = column_def.match(/\A(#{SqlConstants::PATTERNS[:identifier]})\s+(#{SqlConstants::DATA_TYPES.join('|')})\z/i)
     return parse_error unless match
     
     column_name = match[1]
@@ -211,9 +187,9 @@ class SqlParser
   end
   
   def parse_drop_table(sql)
-    if match = sql.match(/\ADROP\s+TABLE\s+IF\s+EXISTS\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
+    if match = sql.match(/\ADROP\s+TABLE\s+IF\s+EXISTS\s+(#{SqlConstants::PATTERNS[:identifier]})\s*;?\s*\z/i)
       { type: :drop_table, table_name: match[1], if_exists: true }
-    elsif match = sql.match(/\ADROP\s+TABLE\s+(#{IDENTIFIER_PATTERN})\s*;?\s*\z/i)
+    elsif match = sql.match(/\ADROP\s+TABLE\s+(#{SqlConstants::PATTERNS[:identifier]})\s*;?\s*\z/i)
       { type: :drop_table, table_name: match[1], if_exists: false }
     else
       parse_error
@@ -222,7 +198,7 @@ class SqlParser
   
   def parse_insert(sql)
     # Handle multiple value sets: VALUES (1, 2), (3, 4)
-    match = sql.match(/\AINSERT\s+INTO\s+(#{IDENTIFIER_PATTERN})\s+VALUES\s*(.*)\s*;?\s*\z/im)
+    match = sql.match(/\AINSERT\s+INTO\s+(#{SqlConstants::PATTERNS[:identifier]})\s+VALUES\s*(.*)\s*;?\s*\z/im)
     return parse_error unless match
     
     table_name = match[1]
