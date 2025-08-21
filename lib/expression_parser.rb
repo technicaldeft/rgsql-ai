@@ -216,57 +216,27 @@ class ExpressionParser
       name = previous.value
       
       if match(SqlConstants::TOKEN_TYPES[:lparen])
-        # Parse as a function call - parse arguments generically
-        args = []
-        unless check(SqlConstants::TOKEN_TYPES[:rparen])
-          loop do
-            arg = parse_or_expression
-            return arg if arg[:error]
-            args << arg
-            break unless match(SqlConstants::TOKEN_TYPES[:comma])
-          end
-        end
-        return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
-        
-        # Return the function with the appropriate name
-        case name.upcase
-        when 'ABS'
-          return { type: :function, name: :abs, args: args }
-        when 'MOD'
-          return { type: :function, name: :mod, args: args }
-        else
-          return { type: :function, name: name.downcase.to_sym, args: args }
-        end
+        args = parse_function_arguments
+        return args if args.is_a?(Hash) && args[:error]
+        return create_function_node(name, args)
       else
         return { type: :column, name: name }
       end
     end
     
-    if match(SqlConstants::TOKEN_TYPES[:abs]) && match(SqlConstants::TOKEN_TYPES[:lparen])
-      args = []
-      unless check(SqlConstants::TOKEN_TYPES[:rparen])
-        loop do
-          arg = parse_or_expression
-          return arg if arg[:error]
-          args << arg
-          break unless match(SqlConstants::TOKEN_TYPES[:comma])
-        end
-      end
-      return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
+    if check(SqlConstants::TOKEN_TYPES[:abs]) && peek_ahead(1)&.type == SqlConstants::TOKEN_TYPES[:lparen]
+      advance  # consume ABS
+      advance  # consume LPAREN
+      args = parse_function_arguments
+      return args if args.is_a?(Hash) && args[:error]
       return { type: :function, name: :abs, args: args }
     end
     
-    if match(SqlConstants::TOKEN_TYPES[:mod]) && match(SqlConstants::TOKEN_TYPES[:lparen])
-      args = []
-      unless check(SqlConstants::TOKEN_TYPES[:rparen])
-        loop do
-          arg = parse_or_expression
-          return arg if arg[:error]
-          args << arg
-          break unless match(SqlConstants::TOKEN_TYPES[:comma])
-        end
-      end
-      return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
+    if check(SqlConstants::TOKEN_TYPES[:mod]) && peek_ahead(1)&.type == SqlConstants::TOKEN_TYPES[:lparen]
+      advance  # consume MOD
+      advance  # consume LPAREN
+      args = parse_function_arguments
+      return args if args.is_a?(Hash) && args[:error]
       return { type: :function, name: :mod, args: args }
     end
     
@@ -312,6 +282,12 @@ class ExpressionParser
     @tokens[@current - 1]
   end
   
+  def peek_ahead(offset)
+    index = @current + offset
+    return nil if index >= @tokens.length
+    @tokens[index]
+  end
+  
   def parse_left_associative_binary_op(next_method, operators)
     expr = send(next_method)
     return expr if expr[:error]
@@ -331,5 +307,30 @@ class ExpressionParser
     end
     
     expr
+  end
+  
+  def parse_function_arguments
+    args = []
+    unless check(SqlConstants::TOKEN_TYPES[:rparen])
+      loop do
+        arg = parse_or_expression
+        return arg if arg[:error]
+        args << arg
+        break unless match(SqlConstants::TOKEN_TYPES[:comma])
+      end
+    end
+    return { error: SqlConstants::ERROR_TYPES[:parsing] } unless match(SqlConstants::TOKEN_TYPES[:rparen])
+    args
+  end
+  
+  def create_function_node(name, args)
+    case name.upcase
+    when 'ABS'
+      { type: :function, name: :abs, args: args }
+    when 'MOD'
+      { type: :function, name: :mod, args: args }
+    else
+      { type: :function, name: name.downcase.to_sym, args: args }
+    end
   end
 end
