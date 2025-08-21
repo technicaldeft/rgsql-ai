@@ -5,6 +5,7 @@ require_relative 'error_handler'
 require_relative 'row_processor'
 require_relative 'sql_validator'
 require_relative 'row_sorter'
+require_relative 'query_planner'
 
 class SqlExecutor
   include ErrorHandler
@@ -14,6 +15,7 @@ class SqlExecutor
     @row_processor = RowProcessor.new(@evaluator)
     @validator = SqlValidator.new(@evaluator)
     @row_sorter = RowSorter.new(@evaluator)
+    @query_planner = QueryPlanner.new(@validator, @evaluator)
   end
   
   def execute(parsed_sql)
@@ -92,46 +94,12 @@ class SqlExecutor
     result_rows = []
     
     # Build alias mapping for ORDER BY validation
-    alias_mapping = build_alias_mapping(expressions)
+    alias_mapping = @query_planner.build_alias_mapping(expressions)
     
     # Validate expressions against schema even if table is empty
     begin
-      # Create a dummy row with appropriate types for validation
-      dummy_row_data = create_dummy_row_data(table_info[:columns])
-      
-      # Validate SELECT expressions
-      @validator.validate_select_expressions(expressions, dummy_row_data, table_name)
-      
-      # Validate WHERE clause if present
-      if where_clause
-        @validator.validate_qualified_columns(where_clause, table_name)
-        return validation_error unless @validator.validate_where_clause(where_clause, dummy_row_data)
-      end
-      
-      # Validate ORDER BY if present
-      if order_by
-        # First check if it's a simple alias reference
-        if order_by[:expression][:type] == :column && alias_mapping[order_by[:expression][:name]]
-          # It's an alias - this is allowed for simple references
-        else
-          # For expressions containing aliases, they're not allowed
-          if @validator.contains_alias_in_expression?(order_by[:expression], alias_mapping)
-            return validation_error
-          end
-          # Validate the ORDER BY expression normally
-          @validator.validate_qualified_columns(order_by[:expression], table_name)
-          @evaluator.validate_types(order_by[:expression], dummy_row_data)
-        end
-      end
-      
-      # Validate LIMIT if present
-      if limit
-        return validation_error unless @validator.validate_limit_offset_expression(limit)
-      end
-      
-      # Validate OFFSET if present
-      if offset
-        return validation_error unless @validator.validate_limit_offset_expression(offset)
+      unless @query_planner.validate_query(parsed_sql, table_info, alias_mapping)
+        return validation_error
       end
       
       # Process rows with WHERE filtering
@@ -157,7 +125,7 @@ class SqlExecutor
     end
     
     # Build column names from expressions or aliases
-    column_names = extract_column_names(expressions)
+    column_names = @query_planner.extract_column_names(expressions)
     
     { rows: result_rows, columns: column_names }
   end
@@ -207,46 +175,6 @@ class SqlExecutor
     ok_status
   end
   
-  def create_dummy_row_data(columns)
-    dummy_row_data = {}
-    columns.each do |col|
-      case col[:type]
-      when 'BOOLEAN'
-        dummy_row_data[col[:name]] = true
-      when 'INTEGER'
-        dummy_row_data[col[:name]] = 0
-      else
-        dummy_row_data[col[:name]] = nil
-      end
-    end
-    dummy_row_data
-  end
-  
-  
-  def extract_column_names(expressions)
-    expressions.map do |expr_info|
-      if expr_info[:alias]
-        expr_info[:alias]
-      elsif expr_info[:expression][:type] == :column
-        expr_info[:expression][:name]
-      elsif expr_info[:expression][:type] == :qualified_column
-        expr_info[:expression][:column]
-      else
-        ''
-      end
-    end
-  end
-  
-  
-  def build_alias_mapping(expressions)
-    mapping = {}
-    expressions.each do |expr_info|
-      if expr_info[:alias]
-        mapping[expr_info[:alias]] = expr_info[:expression]
-      end
-    end
-    mapping
-  end
   
   
   
