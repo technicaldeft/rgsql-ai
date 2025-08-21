@@ -1,15 +1,15 @@
 require_relative 'parsing_utils'
 require_relative 'sql_constants'
 require_relative 'select_parser'
-require_relative 'value_list_parser'
 require_relative 'table_parser'
+require_relative 'insert_parser'
 
 class SqlParser
   include ParsingUtils
   include SqlConstants
   include SelectParser
-  include ValueListParser
   include TableParser
+  include InsertParser
   
   def parse(sql)
     sql = sql.strip
@@ -74,25 +74,6 @@ class SqlParser
   
   def parse_column_names(select_list)
     parse_select_expressions(select_list)
-  end
-  
-  def parse_select_value(expression)
-    parse_select_item(expression)
-  end
-  
-  
-  def parse_insert(sql)
-    # Handle multiple value sets: VALUES (1, 2), (3, 4)
-    match = sql.match(/\AINSERT\s+INTO\s+(#{SqlConstants::PATTERNS[:identifier]})\s+VALUES\s*(.*)\s*;?\s*\z/im)
-    return parse_error unless match
-    
-    table_name = match[1]
-    values_clause = match[2]
-    
-    value_sets = parse_multiple_value_sets(values_clause)
-    return value_sets if is_error?(value_sets)
-    
-    { type: :insert_multiple, table_name: table_name, value_sets: value_sets }
   end
   
 end
