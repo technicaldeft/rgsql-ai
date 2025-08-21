@@ -8,24 +8,9 @@ class ExpressionEvaluator
       # Literals have their own type (including NULL/nil)
       expression[:value]
     when :column
-      column_name = expression[:name]
-      if row_data.key?(column_name)
-        row_data[column_name]
-      else
-        raise ValidationError, "Unknown column: #{column_name}"
-      end
+      lookup_column(expression[:name], row_data)
     when :qualified_column
-      table_name = expression[:table]
-      column_name = expression[:column]
-      # For now, we'll treat qualified columns the same as regular columns
-      # The validation of table name happens in the SQL executor
-      # Try case-insensitive match for column name
-      matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
-      if matching_key
-        row_data[matching_key]
-      else
-        raise ValidationError, "Unknown column: #{column_name}"
-      end
+      lookup_qualified_column(expression, row_data)
     when :binary_op
       validate_binary_op_types(expression, row_data)
     when :unary_op
@@ -42,24 +27,9 @@ class ExpressionEvaluator
     when :literal
       expression[:value]
     when :column
-      column_name = expression[:name]
-      if row_data.key?(column_name)
-        row_data[column_name]
-      else
-        raise ValidationError, "Unknown column: #{column_name}"
-      end
+      lookup_column(expression[:name], row_data)
     when :qualified_column
-      table_name = expression[:table]
-      column_name = expression[:column]
-      # For now, we'll treat qualified columns the same as regular columns
-      # The validation of table name happens in the SQL executor
-      # Try case-insensitive match for column name
-      matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
-      if matching_key
-        row_data[matching_key]
-      else
-        raise ValidationError, "Unknown column: #{column_name}"
-      end
+      lookup_qualified_column(expression, row_data)
     when :binary_op
       evaluate_binary_op(expression, row_data)
     when :unary_op
@@ -74,53 +44,13 @@ class ExpressionEvaluator
   def get_expression_type(expression, row_data = {})
     case expression[:type]
     when :literal
-      value = expression[:value]
-      if value.nil?
-        nil
-      elsif value.is_a?(Integer)
-        :integer
-      elsif value == true || value == false
-        :boolean
-      else
-        :unknown
-      end
+      infer_type(expression[:value])
     when :column
-      column_name = expression[:name]
-      if row_data.key?(column_name)
-        value = row_data[column_name]
-        if value.nil?
-          nil
-        elsif value.is_a?(Integer)
-          :integer
-        elsif value == true || value == false
-          :boolean
-        else
-          :unknown
-        end
-      else
-        raise ValidationError, "Unknown column: #{column_name}"
-      end
+      value = lookup_column(expression[:name], row_data)
+      infer_type(value)
     when :qualified_column
-      table_name = expression[:table]
-      column_name = expression[:column]
-      # For now, we'll treat qualified columns the same as regular columns
-      # The validation of table name happens in the SQL executor
-      # Try case-insensitive match for column name
-      matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
-      if matching_key
-        value = row_data[matching_key]
-        if value.nil?
-          nil
-        elsif value.is_a?(Integer)
-          :integer
-        elsif value == true || value == false
-          :boolean
-        else
-          :unknown
-        end
-      else
-        raise ValidationError, "Unknown column: #{column_name}"
-      end
+      value = lookup_qualified_column(expression, row_data)
+      infer_type(value)
     when :binary_op
       get_binary_op_type(expression, row_data)
     when :unary_op
@@ -405,6 +335,37 @@ class ExpressionEvaluator
   def validate_boolean(value)
     unless [true, false].include?(value)
       raise ValidationError, "Type mismatch: expected boolean"
+    end
+  end
+  
+  def lookup_column(column_name, row_data)
+    if row_data.key?(column_name)
+      row_data[column_name]
+    else
+      raise ValidationError, "Unknown column: #{column_name}"
+    end
+  end
+  
+  def lookup_qualified_column(expression, row_data)
+    column_name = expression[:column]
+    # Try case-insensitive match for column name
+    matching_key = row_data.keys.find { |key| key.downcase == column_name.downcase }
+    if matching_key
+      row_data[matching_key]
+    else
+      raise ValidationError, "Unknown column: #{column_name}"
+    end
+  end
+  
+  def infer_type(value)
+    if value.nil?
+      nil
+    elsif value.is_a?(Integer)
+      :integer
+    elsif value == true || value == false
+      :boolean
+    else
+      :unknown
     end
   end
 end
