@@ -2,10 +2,12 @@ require_relative 'boolean_converter'
 require_relative 'parsing_utils'
 require_relative 'expression_parser'
 require_relative 'sql_constants'
+require_relative 'select_parser'
 
 class SqlParser
   include ParsingUtils
   include SqlConstants
+  include SelectParser
   
   def parse(sql)
     sql = sql.strip
@@ -71,75 +73,18 @@ class SqlParser
     
     select_list = match[1].strip
     
-    expressions = []
-    columns = []
+    result = parse_select_list(select_list)
+    return result if is_error?(result)
     
-    if !select_list.empty?
-      parts = split_on_comma(select_list)
-      
-      parts.each do |part|
-        parsed_value = parse_select_value(part)
-        return parsed_value if parsed_value[:error]
-        
-        expressions << parsed_value[:expression]
-        columns << parsed_value[:column]
-      end
-    end
-    
-    { type: :select, expressions: expressions, columns: columns }
+    { type: :select, expressions: result[:expressions], columns: result[:columns] }
   end
   
   def parse_column_names(select_list)
-    return [] if select_list.empty?
-    
-    parts = split_on_comma(select_list)
-    expressions = []
-    
-    parts.each do |part|
-      part = part.strip
-      
-      # Check for AS alias
-      alias_match = part.match(/(.+?)\s+AS\s+(#{SqlConstants::PATTERNS[:identifier]})\s*\z/i)
-      
-      if alias_match
-        expr_str = alias_match[1].strip
-        column_alias = alias_match[2]
-      else
-        expr_str = part
-        column_alias = nil
-      end
-      
-      # Parse the expression
-      parser = ExpressionParser.new
-      parsed_expr = parser.parse(expr_str)
-      
-      return parsed_expr if parsed_expr[:error]
-      
-      expressions << { expression: parsed_expr, alias: column_alias }
-    end
-    
-    expressions
+    parse_select_expressions(select_list)
   end
   
   def parse_select_value(expression)
-    # Check for AS alias
-    alias_match = expression.match(/(.+?)\s+AS\s+(#{SqlConstants::PATTERNS[:identifier]})\s*\z/i)
-    
-    if alias_match
-      expr_str = alias_match[1].strip
-      column_alias = alias_match[2]
-    else
-      expr_str = expression.strip
-      column_alias = nil
-    end
-    
-    # Parse the expression
-    parser = ExpressionParser.new
-    parsed_expr = parser.parse(expr_str)
-    
-    return parsed_expr if parsed_expr[:error]
-    
-    { expression: parsed_expr, column: column_alias }
+    parse_select_item(expression)
   end
   
   def parse_create_table(sql)
