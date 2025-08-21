@@ -70,6 +70,10 @@ class SqlExecutor
   def execute_select_from(parsed_sql)
     table_name = parsed_sql[:table_name]
     expressions = parsed_sql[:expressions]
+    where_clause = parsed_sql[:where]
+    order_by = parsed_sql[:order_by]
+    limit = parsed_sql[:limit]
+    offset = parsed_sql[:offset]
     
     # Get table info
     table_info = @table_manager.get_table_info(table_name)
@@ -82,28 +86,108 @@ class SqlExecutor
     evaluator = ExpressionEvaluator.new
     result_rows = []
     
+    # Build alias mapping for ORDER BY validation
+    alias_mapping = build_alias_mapping(expressions)
+    
     # Validate expressions against schema even if table is empty
     begin
       # Create a dummy row with appropriate types for validation
       dummy_row_data = create_dummy_row_data(table_info[:columns])
       
-      # First validate types with dummy data
+      # Validate SELECT expressions
       expressions.each do |expr_info|
         evaluator.validate_types(expr_info[:expression], dummy_row_data)
       end
       
-      # Then evaluate for real rows
+      # Validate WHERE clause if present
+      if where_clause
+        evaluator.validate_types(where_clause, dummy_row_data)
+        
+        # Check that WHERE clause evaluates to boolean or NULL
+        where_type = evaluator.get_expression_type(where_clause, dummy_row_data)
+        unless where_type == :boolean || where_type.nil?
+          return validation_error
+        end
+      end
+      
+      # Validate ORDER BY if present
+      if order_by
+        # First check if it's a simple alias reference
+        if order_by[:expression][:type] == :column && alias_mapping[order_by[:expression][:name]]
+          # It's an alias - this is allowed for simple references
+        else
+          # For expressions containing aliases, they're not allowed
+          if contains_alias_in_expression?(order_by[:expression], alias_mapping)
+            return validation_error
+          end
+          # Validate the ORDER BY expression normally
+          evaluator.validate_types(order_by[:expression], dummy_row_data)
+        end
+      end
+      
+      # Validate LIMIT if present
+      if limit
+        # LIMIT cannot contain column references
+        if contains_column_reference?(limit)
+          return validation_error
+        end
+        
+        evaluator.validate_types(limit, {})
+        limit_type = evaluator.get_expression_type(limit, {})
+        unless limit_type == :integer || limit_type.nil?
+          return validation_error
+        end
+      end
+      
+      # Validate OFFSET if present
+      if offset
+        # OFFSET cannot contain column references
+        if contains_column_reference?(offset)
+          return validation_error
+        end
+        
+        evaluator.validate_types(offset, {})
+        offset_type = evaluator.get_expression_type(offset, {})
+        unless offset_type == :integer || offset_type.nil?
+          return validation_error
+        end
+      end
+      
+      # Process rows with WHERE filtering
+      filtered_rows = []
       all_data[:rows].each do |row|
-        # Build row data hash for column lookups
         row_data = build_row_data_hash(row, table_info[:columns])
         
-        # Evaluate expressions for this row
+        # Apply WHERE filter if present
+        if where_clause
+          where_result = evaluator.evaluate(where_clause, row_data)
+          # Only include row if WHERE evaluates to true (not false, not null)
+          next unless where_result == true
+        end
+        
+        # Store both the row data and the evaluated SELECT expressions
         result_row = expressions.map do |expr_info|
           value = evaluator.evaluate(expr_info[:expression], row_data)
           BooleanConverter.convert(value)
         end
-        result_rows << result_row
+        
+        filtered_rows << { result: result_row, row_data: row_data }
       end
+      
+      # Apply ORDER BY if present
+      if order_by
+        sorted_rows = sort_rows(filtered_rows, order_by, alias_mapping, evaluator, table_info[:columns])
+        filtered_rows = sorted_rows
+      end
+      
+      # Extract just the result rows
+      result_rows = filtered_rows.map { |row_info| row_info[:result] }
+      
+      # Apply LIMIT and OFFSET
+      if limit || offset
+        result_rows = apply_limit_offset(result_rows, limit, offset, evaluator)
+      end
+      
     rescue ExpressionEvaluator::DivisionByZeroError
       return division_by_zero_error
     rescue ExpressionEvaluator::ValidationError
@@ -214,5 +298,148 @@ class SqlExecutor
       end
     end
     true
+  end
+  
+  def build_alias_mapping(expressions)
+    mapping = {}
+    expressions.each do |expr_info|
+      if expr_info[:alias]
+        mapping[expr_info[:alias]] = expr_info[:expression]
+      end
+    end
+    mapping
+  end
+  
+  def contains_column_reference?(expr)
+    return false unless expr
+    
+    case expr[:type]
+    when :column
+      true
+    when :binary_op
+      contains_column_reference?(expr[:left]) || contains_column_reference?(expr[:right])
+    when :unary_op
+      contains_column_reference?(expr[:operand])
+    when :function
+      expr[:arguments].any? { |arg| contains_column_reference?(arg) }
+    else
+      false
+    end
+  end
+  
+  def contains_alias_in_expression?(expr, alias_mapping)
+    return false unless expr
+    
+    case expr[:type]
+    when :column
+      # Check if this is an alias used in an expression (not as a simple reference)
+      false  # Simple column references are checked separately
+    when :binary_op
+      # Check if either operand references an alias
+      left_contains = expr[:left][:type] == :column && alias_mapping[expr[:left][:name]]
+      right_contains = expr[:right][:type] == :column && alias_mapping[expr[:right][:name]]
+      left_contains || right_contains || 
+        contains_alias_in_expression?(expr[:left], alias_mapping) || 
+        contains_alias_in_expression?(expr[:right], alias_mapping)
+    when :unary_op
+      operand_contains = expr[:operand][:type] == :column && alias_mapping[expr[:operand][:name]]
+      operand_contains || contains_alias_in_expression?(expr[:operand], alias_mapping)
+    when :function
+      expr[:arguments].any? do |arg|
+        (arg[:type] == :column && alias_mapping[arg[:name]]) ||
+        contains_alias_in_expression?(arg, alias_mapping)
+      end
+    else
+      false
+    end
+  end
+  
+  def sort_rows(rows, order_by, alias_mapping, evaluator, columns)
+    rows.sort do |a, b|
+      # Evaluate the ORDER BY expression for each row
+      a_value = evaluate_order_expression(a, order_by[:expression], alias_mapping, evaluator, columns)
+      b_value = evaluate_order_expression(b, order_by[:expression], alias_mapping, evaluator, columns)
+      
+      # Compare values considering NULLs
+      comparison = compare_values_for_sort(a_value, b_value)
+      
+      # Apply direction
+      if order_by[:direction] == 'DESC'
+        -comparison
+      else
+        comparison
+      end
+    end
+  end
+  
+  def evaluate_order_expression(row_info, expr, alias_mapping, evaluator, columns)
+    # Check if it's a simple alias reference
+    if expr[:type] == :column && alias_mapping[expr[:name]]
+      # Find the index of the aliased expression in the result
+      alias_name = expr[:name]
+      # The result row already has the evaluated expression values
+      # We need to find which position corresponds to this alias
+      # This is a bit tricky - we need to look up the alias in our expressions
+      # For now, let's re-evaluate the original expression
+      evaluator.evaluate(alias_mapping[alias_name], row_info[:row_data])
+    else
+      # Regular expression evaluation
+      evaluator.evaluate(expr, row_info[:row_data])
+    end
+  end
+  
+  def compare_values_for_sort(a, b)
+    # Handle NULLs - they sort as larger than any non-null value
+    if a.nil? && b.nil?
+      0
+    elsif a.nil?
+      1
+    elsif b.nil?
+      -1
+    elsif a.is_a?(TrueClass) || a.is_a?(FalseClass)
+      # Boolean comparison: false < true
+      if b.is_a?(TrueClass) || b.is_a?(FalseClass)
+        a_val = a ? 1 : 0
+        b_val = b ? 1 : 0
+        a_val <=> b_val
+      else
+        # Type mismatch
+        0
+      end
+    else
+      # Regular comparison
+      a <=> b
+    end
+  end
+  
+  def apply_limit_offset(rows, limit_expr, offset_expr, evaluator)
+    # Evaluate LIMIT
+    limit_value = nil
+    if limit_expr
+      limit_value = evaluator.evaluate(limit_expr, {})
+      # NULL means no limit
+      return rows if limit_value.nil?
+      # Negative or zero limit
+      limit_value = [limit_value, 0].max
+    end
+    
+    # Evaluate OFFSET
+    offset_value = 0
+    if offset_expr
+      offset_value = evaluator.evaluate(offset_expr, {})
+      # NULL means no offset (start from 0)
+      offset_value = 0 if offset_value.nil?
+      offset_value = [offset_value, 0].max
+    end
+    
+    # Apply offset first
+    result = rows[offset_value..-1] || []
+    
+    # Then apply limit
+    if limit_value
+      result = result[0...limit_value] || []
+    end
+    
+    result
   end
 end

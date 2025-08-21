@@ -47,7 +47,80 @@ class ExpressionEvaluator
     end
   end
   
+  def get_expression_type(expression, row_data = {})
+    case expression[:type]
+    when :literal
+      value = expression[:value]
+      if value.nil?
+        nil
+      elsif value.is_a?(Integer)
+        :integer
+      elsif value == true || value == false
+        :boolean
+      else
+        :unknown
+      end
+    when :column
+      column_name = expression[:name]
+      if row_data.key?(column_name)
+        value = row_data[column_name]
+        if value.nil?
+          nil
+        elsif value.is_a?(Integer)
+          :integer
+        elsif value == true || value == false
+          :boolean
+        else
+          :unknown
+        end
+      else
+        raise ValidationError, "Unknown column: #{column_name}"
+      end
+    when :binary_op
+      get_binary_op_type(expression, row_data)
+    when :unary_op
+      get_unary_op_type(expression, row_data)
+    when :function
+      get_function_type(expression, row_data)
+    else
+      raise ValidationError, "Unknown expression type: #{expression[:type]}"
+    end
+  end
+  
   private
+  
+  def get_binary_op_type(expression, row_data)
+    case expression[:operator]
+    when :plus, :minus, :star, :slash
+      :integer
+    when :lt, :gt, :lte, :gte, :equal, :not_equal
+      :boolean
+    when :and, :or
+      :boolean
+    else
+      raise ValidationError, "Unknown operator: #{expression[:operator]}"
+    end
+  end
+  
+  def get_unary_op_type(expression, row_data)
+    case expression[:operator]
+    when :minus
+      :integer
+    when :not
+      :boolean
+    else
+      raise ValidationError, "Unknown unary operator: #{expression[:operator]}"
+    end
+  end
+  
+  def get_function_type(expression, row_data)
+    case expression[:name]
+    when :abs, :mod
+      :integer
+    else
+      raise ValidationError, "Unknown function: #{expression[:name]}"
+    end
+  end
   
   def validate_binary_op_types(expression, row_data)
     left = validate_types(expression[:left], row_data)
