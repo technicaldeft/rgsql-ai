@@ -154,25 +154,7 @@ class SqlExecutor
       end
       
       # Process rows with WHERE filtering
-      filtered_rows = []
-      all_data[:rows].each do |row|
-        row_data = build_row_data_hash(row, table_info[:columns])
-        
-        # Apply WHERE filter if present
-        if where_clause
-          where_result = evaluator.evaluate(where_clause, row_data)
-          # Only include row if WHERE evaluates to true (not false, not null)
-          next unless where_result == true
-        end
-        
-        # Store both the row data and the evaluated SELECT expressions
-        result_row = expressions.map do |expr_info|
-          value = evaluator.evaluate(expr_info[:expression], row_data)
-          BooleanConverter.convert(value)
-        end
-        
-        filtered_rows << { result: result_row, row_data: row_data }
-      end
+      filtered_rows = filter_rows_with_where(all_data[:rows], table_info[:columns], where_clause, expressions, evaluator)
       
       # Apply ORDER BY if present
       if order_by
@@ -410,6 +392,31 @@ class SqlExecutor
       # Regular comparison
       a <=> b
     end
+  end
+  
+  def filter_rows_with_where(rows, columns, where_clause, expressions, evaluator)
+    filtered_rows = []
+    
+    rows.each do |row|
+      row_data = build_row_data_hash(row, columns)
+      
+      # Apply WHERE filter if present
+      if where_clause
+        where_result = evaluator.evaluate(where_clause, row_data)
+        # Only include row if WHERE evaluates to true (not false, not null)
+        next unless where_result == true
+      end
+      
+      # Store both the row data and the evaluated SELECT expressions
+      result_row = expressions.map do |expr_info|
+        value = evaluator.evaluate(expr_info[:expression], row_data)
+        BooleanConverter.convert(value)
+      end
+      
+      filtered_rows << { result: result_row, row_data: row_data }
+    end
+    
+    filtered_rows
   end
   
   def apply_limit_offset(rows, limit_expr, offset_expr, evaluator)
