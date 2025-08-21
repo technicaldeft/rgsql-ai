@@ -3,6 +3,7 @@ require_relative 'boolean_converter'
 require_relative 'expression_evaluator'
 require_relative 'error_handler'
 require_relative 'row_processor'
+require_relative 'sql_validator'
 
 class SqlExecutor
   include ErrorHandler
@@ -10,6 +11,7 @@ class SqlExecutor
     @table_manager = TableManager.new
     @evaluator = ExpressionEvaluator.new
     @row_processor = RowProcessor.new(@evaluator)
+    @validator = SqlValidator.new(@evaluator)
   end
   
   def execute(parsed_sql)
@@ -96,12 +98,12 @@ class SqlExecutor
       dummy_row_data = create_dummy_row_data(table_info[:columns])
       
       # Validate SELECT expressions
-      validate_select_expressions(expressions, @evaluator, dummy_row_data, table_name)
+      @validator.validate_select_expressions(expressions, dummy_row_data, table_name)
       
       # Validate WHERE clause if present
       if where_clause
-        validate_qualified_columns(where_clause, table_name)
-        return validation_error unless validate_where_clause(where_clause, @evaluator, dummy_row_data)
+        @validator.validate_qualified_columns(where_clause, table_name)
+        return validation_error unless @validator.validate_where_clause(where_clause, dummy_row_data)
       end
       
       # Validate ORDER BY if present
@@ -111,23 +113,23 @@ class SqlExecutor
           # It's an alias - this is allowed for simple references
         else
           # For expressions containing aliases, they're not allowed
-          if contains_alias_in_expression?(order_by[:expression], alias_mapping)
+          if @validator.contains_alias_in_expression?(order_by[:expression], alias_mapping)
             return validation_error
           end
           # Validate the ORDER BY expression normally
-          validate_qualified_columns(order_by[:expression], table_name)
+          @validator.validate_qualified_columns(order_by[:expression], table_name)
           @evaluator.validate_types(order_by[:expression], dummy_row_data)
         end
       end
       
       # Validate LIMIT if present
       if limit
-        return validation_error unless validate_limit_offset_expression(limit, @evaluator)
+        return validation_error unless @validator.validate_limit_offset_expression(limit)
       end
       
       # Validate OFFSET if present
       if offset
-        return validation_error unless validate_limit_offset_expression(offset, @evaluator)
+        return validation_error unless @validator.validate_limit_offset_expression(offset)
       end
       
       # Process rows with WHERE filtering
@@ -185,7 +187,7 @@ class SqlExecutor
         end
         
         # Validate types match table schema
-        return validation_error unless validate_row_types(values, table_info[:columns])
+        return validation_error unless @validator.validate_row_types(values, table_info[:columns])
         
         all_values << values
       end
@@ -234,23 +236,6 @@ class SqlExecutor
     end
   end
   
-  def validate_row_types(values, columns)
-    values.each_with_index do |value, idx|
-      column = columns[idx]
-      if column
-        # NULL is allowed for any column type
-        next if value.nil?
-        
-        case column[:type]
-        when 'INTEGER'
-          return false unless value.is_a?(Integer)
-        when 'BOOLEAN'
-          return false unless [true, false].include?(value)
-        end
-      end
-    end
-    true
-  end
   
   def build_alias_mapping(expressions)
     mapping = {}
@@ -262,49 +247,6 @@ class SqlExecutor
     mapping
   end
   
-  def contains_column_reference?(expr)
-    return false unless expr
-    
-    case expr[:type]
-    when :column, :qualified_column
-      true
-    when :binary_op
-      contains_column_reference?(expr[:left]) || contains_column_reference?(expr[:right])
-    when :unary_op
-      contains_column_reference?(expr[:operand])
-    when :function
-      expr[:args] && expr[:args].any? { |arg| contains_column_reference?(arg) }
-    else
-      false
-    end
-  end
-  
-  def contains_alias_in_expression?(expr, alias_mapping)
-    return false unless expr
-    
-    case expr[:type]
-    when :column
-      # Check if this is an alias used in an expression (not as a simple reference)
-      false  # Simple column references are checked separately
-    when :binary_op
-      # Check if either operand references an alias
-      left_contains = expr[:left][:type] == :column && alias_mapping[expr[:left][:name]]
-      right_contains = expr[:right][:type] == :column && alias_mapping[expr[:right][:name]]
-      left_contains || right_contains || 
-        contains_alias_in_expression?(expr[:left], alias_mapping) || 
-        contains_alias_in_expression?(expr[:right], alias_mapping)
-    when :unary_op
-      operand_contains = expr[:operand][:type] == :column && alias_mapping[expr[:operand][:name]]
-      operand_contains || contains_alias_in_expression?(expr[:operand], alias_mapping)
-    when :function
-      expr[:arguments].any? do |arg|
-        (arg[:type] == :column && alias_mapping[arg[:name]]) ||
-        contains_alias_in_expression?(arg, alias_mapping)
-      end
-    else
-      false
-    end
-  end
   
   def sort_rows(rows, order_by, alias_mapping, evaluator, columns)
     rows.sort do |a, b|
@@ -333,47 +275,6 @@ class SqlExecutor
     direction == 'DESC' ? -comparison : comparison
   end
   
-  def validate_select_expressions(expressions, evaluator, dummy_row_data, table_name = nil)
-    expressions.each do |expr_info|
-      # Validate qualified column references if present
-      validate_qualified_columns(expr_info[:expression], table_name) if table_name
-      evaluator.validate_types(expr_info[:expression], dummy_row_data)
-    end
-  end
-  
-  def validate_qualified_columns(expr, table_name)
-    case expr[:type]
-    when :qualified_column
-      # Check if the table qualifier matches the current table
-      if expr[:table].downcase != table_name.downcase
-        raise ExpressionEvaluator::ValidationError, "Invalid table reference: #{expr[:table]}"
-      end
-    when :binary_op
-      validate_qualified_columns(expr[:left], table_name) if expr[:left]
-      validate_qualified_columns(expr[:right], table_name) if expr[:right]
-    when :unary_op
-      validate_qualified_columns(expr[:operand], table_name) if expr[:operand]
-    when :function
-      expr[:args].each { |arg| validate_qualified_columns(arg, table_name) } if expr[:args]
-    end
-  end
-  
-  def validate_where_clause(where_clause, evaluator, dummy_row_data)
-    evaluator.validate_types(where_clause, dummy_row_data)
-    
-    # Check that WHERE clause evaluates to boolean or NULL
-    where_type = evaluator.get_expression_type(where_clause, dummy_row_data)
-    where_type == :boolean || where_type.nil?
-  end
-  
-  def validate_limit_offset_expression(expr, evaluator)
-    # Cannot contain column references
-    return false if contains_column_reference?(expr)
-    
-    evaluator.validate_types(expr, {})
-    expr_type = evaluator.get_expression_type(expr, {})
-    expr_type == :integer || expr_type.nil?
-  end
   
   def compare_values_for_sort(a, b)
     # Handle NULLs - they sort as larger than any non-null value
