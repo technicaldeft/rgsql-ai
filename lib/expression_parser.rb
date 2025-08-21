@@ -128,104 +128,61 @@ class ExpressionParser
   end
   
   def parse_or_expression
-    expr = parse_and_expression
-    return expr if expr[:error]
-    
-    while match(SqlConstants::TOKEN_TYPES[:or])
-      right = parse_and_expression
-      return right if right[:error]
-      expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:or], left: expr, right: right }
-    end
-    
-    expr
+    parse_left_associative_binary_op(
+      :parse_and_expression,
+      [[SqlConstants::TOKEN_TYPES[:or], SqlConstants::OPERATORS[:or]]]
+    )
   end
   
   def parse_and_expression
-    expr = parse_comparison
-    return expr if expr[:error]
-    
-    while match(SqlConstants::TOKEN_TYPES[:and])
-      right = parse_comparison
-      return right if right[:error]
-      expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:and], left: expr, right: right }
-    end
-    
-    expr
+    parse_left_associative_binary_op(
+      :parse_comparison,
+      [[SqlConstants::TOKEN_TYPES[:and], SqlConstants::OPERATORS[:and]]]
+    )
   end
   
   def parse_comparison
     expr = parse_addition
     return expr if expr[:error]
     
-    if match(SqlConstants::TOKEN_TYPES[:lt])
-      right = parse_addition
-      return right if right[:error]
-      return { type: :binary_op, operator: SqlConstants::OPERATORS[:lt], left: expr, right: right }
-    elsif match(SqlConstants::TOKEN_TYPES[:gt])
-      right = parse_addition
-      return right if right[:error]
-      return { type: :binary_op, operator: SqlConstants::OPERATORS[:gt], left: expr, right: right }
-    elsif match(SqlConstants::TOKEN_TYPES[:lte])
-      right = parse_addition
-      return right if right[:error]
-      return { type: :binary_op, operator: SqlConstants::OPERATORS[:lte], left: expr, right: right }
-    elsif match(SqlConstants::TOKEN_TYPES[:gte])
-      right = parse_addition
-      return right if right[:error]
-      return { type: :binary_op, operator: SqlConstants::OPERATORS[:gte], left: expr, right: right }
-    elsif match(SqlConstants::TOKEN_TYPES[:equal])
-      right = parse_addition
-      return right if right[:error]
-      return { type: :binary_op, operator: SqlConstants::OPERATORS[:equal], left: expr, right: right }
-    elsif match(SqlConstants::TOKEN_TYPES[:not_equal])
-      right = parse_addition
-      return right if right[:error]
-      return { type: :binary_op, operator: SqlConstants::OPERATORS[:not_equal], left: expr, right: right }
+    comparison_ops = [
+      [SqlConstants::TOKEN_TYPES[:lt], SqlConstants::OPERATORS[:lt]],
+      [SqlConstants::TOKEN_TYPES[:gt], SqlConstants::OPERATORS[:gt]],
+      [SqlConstants::TOKEN_TYPES[:lte], SqlConstants::OPERATORS[:lte]],
+      [SqlConstants::TOKEN_TYPES[:gte], SqlConstants::OPERATORS[:gte]],
+      [SqlConstants::TOKEN_TYPES[:equal], SqlConstants::OPERATORS[:equal]],
+      [SqlConstants::TOKEN_TYPES[:not_equal], SqlConstants::OPERATORS[:not_equal]]
+    ]
+    
+    comparison_ops.each do |token_type, operator|
+      if match(token_type)
+        right = parse_addition
+        return right if right[:error]
+        return { type: :binary_op, operator: operator, left: expr, right: right }
+      end
     end
     
     expr
   end
   
   def parse_addition
-    expr = parse_multiplication
-    return expr if expr[:error]
-    
-    while true
-      if match(SqlConstants::TOKEN_TYPES[:plus])
-        right = parse_multiplication
-        return right if right[:error]
-        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:plus], left: expr, right: right }
-      elsif match(SqlConstants::TOKEN_TYPES[:minus])
-        right = parse_multiplication
-        return right if right[:error]
-        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:minus], left: expr, right: right }
-      else
-        break
-      end
-    end
-    
-    expr
+    parse_left_associative_binary_op(
+      :parse_multiplication,
+      [
+        [SqlConstants::TOKEN_TYPES[:plus], SqlConstants::OPERATORS[:plus]],
+        [SqlConstants::TOKEN_TYPES[:minus], SqlConstants::OPERATORS[:minus]]
+      ]
+    )
   end
   
   def parse_multiplication
-    expr = parse_unary
-    return expr if expr[:error]
-    
-    while true
-      if match(SqlConstants::TOKEN_TYPES[:star])
-        right = parse_unary
-        return right if right[:error]
-        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:star], left: expr, right: right }
-      elsif match(SqlConstants::TOKEN_TYPES[:slash])
-        right = parse_unary
-        return right if right[:error]
-        expr = { type: :binary_op, operator: SqlConstants::OPERATORS[:slash], left: expr, right: right }
-      else
-        break
-      end
-    end
-    
-    expr
+    parse_left_associative_binary_op(
+      :parse_unary,
+      [
+        [SqlConstants::TOKEN_TYPES[:star], SqlConstants::OPERATORS[:star]],
+        [SqlConstants::TOKEN_TYPES[:slash], SqlConstants::OPERATORS[:slash]]
+      ]
+    )
   end
   
   def parse_unary
@@ -353,5 +310,26 @@ class ExpressionParser
   
   def previous
     @tokens[@current - 1]
+  end
+  
+  def parse_left_associative_binary_op(next_method, operators)
+    expr = send(next_method)
+    return expr if expr[:error]
+    
+    while true
+      matched = false
+      operators.each do |token_type, operator|
+        if match(token_type)
+          right = send(next_method)
+          return right if right[:error]
+          expr = { type: :binary_op, operator: operator, left: expr, right: right }
+          matched = true
+          break
+        end
+      end
+      break unless matched
+    end
+    
+    expr
   end
 end
