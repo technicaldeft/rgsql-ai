@@ -3,45 +3,43 @@ class ExpressionEvaluator
   class DivisionByZeroError < StandardError; end
   
   def validate_types(expression, row_data = {})
-    case expression[:type]
-    when :literal
-      # Literals have their own type (including NULL/nil)
-      expression[:value]
-    when :column
-      lookup_column(expression[:name], row_data)
-    when :qualified_column
-      lookup_qualified_column(expression, row_data)
-    when :binary_op
-      validate_binary_op_types(expression, row_data)
-    when :unary_op
-      validate_unary_op_types(expression, row_data)
-    when :function
-      validate_function_types(expression, row_data)
-    else
-      raise ValidationError, "Unknown expression type: #{expression[:type]}"
-    end
+    dispatch_expression(expression, :validate_types, row_data)
   end
   
   def evaluate(expression, row_data = {})
+    dispatch_expression(expression, :evaluate, row_data)
+  end
+  
+  def evaluate_with_context(expression, row_context, table_context = nil)
+    dispatch_expression_with_context(expression, :evaluate_with_context, row_context, table_context)
+  end
+  
+  def get_expression_type(expression, row_data = {})
+    dispatch_expression(expression, :get_expression_type, row_data)
+  end
+  
+  private
+  
+  def dispatch_expression(expression, operation, row_data)
     case expression[:type]
     when :literal
-      expression[:value]
+      handle_literal(expression, operation, row_data)
     when :column
-      lookup_column(expression[:name], row_data)
+      handle_column(expression, operation, row_data)
     when :qualified_column
-      lookup_qualified_column(expression, row_data)
+      handle_qualified_column(expression, operation, row_data)
     when :binary_op
-      evaluate_binary_op(expression, row_data)
+      handle_binary_op(expression, operation, row_data)
     when :unary_op
-      evaluate_unary_op(expression, row_data)
+      handle_unary_op(expression, operation, row_data)
     when :function
-      evaluate_function(expression, row_data)
+      handle_function(expression, operation, row_data)
     else
       raise ValidationError, "Unknown expression type: #{expression[:type]}"
     end
   end
   
-  def evaluate_with_context(expression, row_context, table_context = nil)
+  def dispatch_expression_with_context(expression, operation, row_context, table_context)
     case expression[:type]
     when :literal
       expression[:value]
@@ -60,28 +58,73 @@ class ExpressionEvaluator
     end
   end
   
-  def get_expression_type(expression, row_data = {})
-    case expression[:type]
-    when :literal
+  def handle_literal(expression, operation, row_data)
+    case operation
+    when :validate_types
+      expression[:value]
+    when :evaluate
+      expression[:value]
+    when :get_expression_type
       infer_type(expression[:value])
-    when :column
-      value = lookup_column(expression[:name], row_data)
-      infer_type(value)
-    when :qualified_column
-      value = lookup_qualified_column(expression, row_data)
-      infer_type(value)
-    when :binary_op
-      get_binary_op_type(expression, row_data)
-    when :unary_op
-      get_unary_op_type(expression, row_data)
-    when :function
-      get_function_type(expression, row_data)
-    else
-      raise ValidationError, "Unknown expression type: #{expression[:type]}"
     end
   end
   
-  private
+  def handle_column(expression, operation, row_data)
+    case operation
+    when :validate_types
+      lookup_column(expression[:name], row_data)
+    when :evaluate
+      lookup_column(expression[:name], row_data)
+    when :get_expression_type
+      value = lookup_column(expression[:name], row_data)
+      infer_type(value)
+    end
+  end
+  
+  def handle_qualified_column(expression, operation, row_data)
+    case operation
+    when :validate_types
+      lookup_qualified_column(expression, row_data)
+    when :evaluate
+      lookup_qualified_column(expression, row_data)
+    when :get_expression_type
+      value = lookup_qualified_column(expression, row_data)
+      infer_type(value)
+    end
+  end
+  
+  def handle_binary_op(expression, operation, row_data)
+    case operation
+    when :validate_types
+      validate_binary_op_types(expression, row_data)
+    when :evaluate
+      evaluate_binary_op(expression, row_data)
+    when :get_expression_type
+      get_binary_op_type(expression, row_data)
+    end
+  end
+  
+  def handle_unary_op(expression, operation, row_data)
+    case operation
+    when :validate_types
+      validate_unary_op_types(expression, row_data)
+    when :evaluate
+      evaluate_unary_op(expression, row_data)
+    when :get_expression_type
+      get_unary_op_type(expression, row_data)
+    end
+  end
+  
+  def handle_function(expression, operation, row_data)
+    case operation
+    when :validate_types
+      validate_function_types(expression, row_data)
+    when :evaluate
+      evaluate_function(expression, row_data)
+    when :get_expression_type
+      get_function_type(expression, row_data)
+    end
+  end
   
   def get_binary_op_type(expression, row_data)
     case expression[:operator]
@@ -478,6 +521,11 @@ class ExpressionEvaluator
     unless [true, false].include?(value)
       raise ValidationError, "Type mismatch: expected boolean"
     end
+  end
+  
+  def validate_booleans(left, right)
+    validate_boolean(left)
+    validate_boolean(right)
   end
   
   def lookup_column(column_name, row_data)
