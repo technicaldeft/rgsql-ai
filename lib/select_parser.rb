@@ -31,7 +31,7 @@ module SelectParser
     # Check for table alias (but not if it's a keyword like INNER, LEFT, etc.)
     table_alias = nil
     alias_match = remainder.match(/\A(#{PATTERNS[:identifier]})(?=#{PATTERNS[:whitespace]}|;|\z)/im)
-    if alias_match && !alias_match[1].match(/\A(INNER|LEFT|RIGHT|FULL|JOIN|WHERE|ORDER|LIMIT|OFFSET)\z/i)
+    if alias_match && !alias_match[1].match(/\A(INNER|LEFT|RIGHT|FULL|JOIN|WHERE|GROUP|ORDER|LIMIT|OFFSET)\z/i)
       table_alias = alias_match[1]
       remainder = remainder[alias_match.end(0)..-1].strip
     end
@@ -58,6 +58,14 @@ module SelectParser
     if where_result[:where]
       result[:where] = where_result[:where]
       remainder = where_result[:remainder]
+    end
+    
+    # Parse GROUP BY clause if present
+    group_result = parse_group_by_clause(remainder)
+    return group_result if is_error?(group_result)
+    if group_result[:group_by]
+      result[:group_by] = group_result[:group_by]
+      remainder = group_result[:remainder]
     end
     
     # Parse ORDER BY clause if present  
@@ -146,8 +154,8 @@ module SelectParser
     
     remainder = match[1]
     
-    # Parse the WHERE expression - it ends at ORDER, LIMIT, OFFSET, or semicolon/end
-    expr_match = remainder.match(/\A(.*?)(?:#{PATTERNS[:whitespace]}(?:ORDER|LIMIT|OFFSET)\b|\s*;|\s*\z)/im)
+    # Parse the WHERE expression - it ends at GROUP, ORDER, LIMIT, OFFSET, or semicolon/end
+    expr_match = remainder.match(/\A(.*?)(?:#{PATTERNS[:whitespace]}(?:GROUP|ORDER|LIMIT|OFFSET)\b|\s*;|\s*\z)/im)
     
     if expr_match
       where_expr_str = expr_match[1].strip
@@ -176,6 +184,41 @@ module SelectParser
       return where_expr if is_error?(where_expr)
       
       { where: where_expr, remainder: '' }
+    end
+  end
+  
+  def parse_group_by_clause(sql)
+    sql = sql.strip
+    
+    # Check if GROUP BY is present
+    group_match = sql.match(/\AGROUP#{PATTERNS[:whitespace]}BY\b/i)
+    return { group_by: nil, remainder: sql } unless group_match
+    
+    # Get everything after GROUP BY
+    remainder = sql[group_match.end(0)..-1].strip
+    
+    # Parse the GROUP BY expression
+    # It ends at ORDER, LIMIT, OFFSET, semicolon, or end of string
+    expr_match = remainder.match(/\A(.*?)(?:#{PATTERNS[:whitespace]}(?:ORDER|LIMIT|OFFSET)\b|\s*;|\s*\z)/im)
+    
+    if expr_match
+      group_clause = expr_match[1].strip
+      
+      # Check for empty GROUP BY expression
+      return parse_error if group_clause.empty?
+      
+      # Parse the group expression
+      parser = ExpressionParser.new
+      group_expr = parser.parse(group_clause)
+      return group_expr if is_error?(group_expr)
+      
+      # Calculate the remainder
+      remainder_start = expr_match.end(1)
+      new_remainder = remainder[remainder_start..-1]
+      
+      { group_by: group_expr, remainder: new_remainder }
+    else
+      { group_by: nil, remainder: sql }
     end
   end
   
@@ -268,7 +311,7 @@ module SelectParser
       # Check for table alias (but not if it's ON or another keyword)
       joined_alias = nil
       alias_match = remainder.match(/\A(#{PATTERNS[:identifier]})(?=#{PATTERNS[:whitespace]}|;|\z)/im)
-      if alias_match && !alias_match[1].match(/\A(ON|INNER|LEFT|RIGHT|FULL|JOIN|WHERE|ORDER|LIMIT|OFFSET)\z/i)
+      if alias_match && !alias_match[1].match(/\A(ON|INNER|LEFT|RIGHT|FULL|JOIN|WHERE|GROUP|ORDER|LIMIT|OFFSET)\z/i)
         joined_alias = alias_match[1]
         remainder = remainder[alias_match.end(0)..-1].strip
       end
@@ -280,8 +323,8 @@ module SelectParser
         
         on_remainder = on_match[1]
         
-        # Parse ON expression - ends at next JOIN, WHERE, ORDER, LIMIT, OFFSET, semicolon, or end
-        on_expr_match = on_remainder.match(/\A(.*?)(?:#{PATTERNS[:whitespace]}(?:INNER|LEFT|RIGHT|FULL|JOIN|WHERE|ORDER|LIMIT|OFFSET)\b|\s*;|\s*\z)/im)
+        # Parse ON expression - ends at next JOIN, WHERE, GROUP, ORDER, LIMIT, OFFSET, semicolon, or end
+        on_expr_match = on_remainder.match(/\A(.*?)(?:#{PATTERNS[:whitespace]}(?:INNER|LEFT|RIGHT|FULL|JOIN|WHERE|GROUP|ORDER|LIMIT|OFFSET)\b|\s*;|\s*\z)/im)
         
         if on_expr_match
           on_expr_str = on_expr_match[1].strip
