@@ -18,11 +18,23 @@ module SelectParser
   
   def parse_select_from(sql)
     # First extract the SELECT expression list and FROM table
+    # The table name may be followed by optional alias
     select_match = sql.match(/\ASELECT#{PATTERNS[:whitespace]}(.*?)#{PATTERNS[:whitespace]}FROM#{PATTERNS[:whitespace]}(#{PATTERNS[:identifier]})/im)
     return parse_error unless select_match
     
     select_list = select_match[1].strip
     table_name = select_match[2]
+    
+    # Parse the rest of the statement starting after the table name
+    remainder = sql[select_match.end(0)..-1].strip
+    
+    # Check for table alias (but not if it's a keyword like INNER, LEFT, etc.)
+    table_alias = nil
+    alias_match = remainder.match(/\A(#{PATTERNS[:identifier]})(?=#{PATTERNS[:whitespace]}|;|\z)/im)
+    if alias_match && !alias_match[1].match(/\A(INNER|LEFT|RIGHT|FULL|JOIN|WHERE|ORDER|LIMIT|OFFSET)\z/i)
+      table_alias = alias_match[1]
+      remainder = remainder[alias_match.end(0)..-1].strip
+    end
     
     # Parse the expression list
     expressions = parse_expression_list(select_list)
@@ -30,9 +42,15 @@ module SelectParser
     
     # Start building the result
     result = { type: :select_from, table_name: table_name, expressions: expressions }
+    result[:table_alias] = table_alias if table_alias
     
-    # Parse the rest of the statement for WHERE, ORDER BY, LIMIT
-    remainder = sql[select_match.end(0)..-1]
+    # Parse JOIN clauses if present
+    join_result = parse_join_clauses(remainder)
+    return join_result if is_error?(join_result)
+    if join_result[:joins] && !join_result[:joins].empty?
+      result[:joins] = join_result[:joins]
+      remainder = join_result[:remainder]
+    end
     
     # Parse WHERE clause if present
     where_result = parse_where_clause(remainder)
@@ -223,6 +241,98 @@ module SelectParser
     else
       { order_by: nil, remainder: sql }
     end
+  end
+  
+  def parse_join_clauses(sql)
+    joins = []
+    remainder = sql
+    
+    while remainder.match(/\A(INNER|LEFT\s+OUTER|RIGHT\s+OUTER|FULL\s+OUTER)#{PATTERNS[:whitespace]}JOIN\b/i)
+      # Match the JOIN type
+      join_match = remainder.match(/\A(INNER|LEFT\s+OUTER|RIGHT\s+OUTER|FULL\s+OUTER)#{PATTERNS[:whitespace]}JOIN#{PATTERNS[:whitespace]}(#{PATTERNS[:identifier]})/im)
+      
+      unless join_match
+        # Try to match JOIN without type specification, should fail
+        if remainder.match(/\AJOIN\b/i)
+          return parse_error
+        end
+        break
+      end
+      
+      join_type = join_match[1].gsub(/\s+/, '_').upcase
+      joined_table = join_match[2]
+      
+      # Move past the JOIN clause
+      remainder = remainder[join_match.end(0)..-1].strip
+      
+      # Check for table alias (but not if it's ON or another keyword)
+      joined_alias = nil
+      alias_match = remainder.match(/\A(#{PATTERNS[:identifier]})(?=#{PATTERNS[:whitespace]}|;|\z)/im)
+      if alias_match && !alias_match[1].match(/\A(ON|INNER|LEFT|RIGHT|FULL|JOIN|WHERE|ORDER|LIMIT|OFFSET)\z/i)
+        joined_alias = alias_match[1]
+        remainder = remainder[alias_match.end(0)..-1].strip
+      end
+      
+      # Check for ON clause (required for INNER JOIN)
+      if remainder.match(/\AON\b/i)
+        on_match = remainder.match(/\AON#{PATTERNS[:whitespace]}(.*)/im)
+        return parse_error unless on_match
+        
+        on_remainder = on_match[1]
+        
+        # Parse ON expression - ends at next JOIN, WHERE, ORDER, LIMIT, OFFSET, semicolon, or end
+        on_expr_match = on_remainder.match(/\A(.*?)(?:#{PATTERNS[:whitespace]}(?:INNER|LEFT|RIGHT|FULL|JOIN|WHERE|ORDER|LIMIT|OFFSET)\b|\s*;|\s*\z)/im)
+        
+        if on_expr_match
+          on_expr_str = on_expr_match[1].strip
+          
+          # Check for empty ON expression
+          return parse_error if on_expr_str.empty?
+          
+          parser = ExpressionParser.new
+          on_expr = parser.parse(on_expr_str)
+          return on_expr if is_error?(on_expr)
+          
+          join_info = {
+            type: join_type,
+            table: joined_table,
+            on: on_expr
+          }
+          join_info[:alias] = joined_alias if joined_alias
+          
+          joins << join_info
+          
+          # Update remainder
+          remainder_start = on_expr_match.end(1)
+          remainder = on_remainder[remainder_start..-1].strip
+        else
+          # ON clause takes everything remaining
+          on_expr_str = on_remainder.strip
+          
+          # Check for empty ON expression
+          return parse_error if on_expr_str.empty?
+          
+          parser = ExpressionParser.new
+          on_expr = parser.parse(on_expr_str)
+          return on_expr if is_error?(on_expr)
+          
+          join_info = {
+            type: join_type,
+            table: joined_table,
+            on: on_expr
+          }
+          join_info[:alias] = joined_alias if joined_alias
+          
+          joins << join_info
+          remainder = ''
+        end
+      else
+        # Missing ON clause for INNER JOIN
+        return parse_error
+      end
+    end
+    
+    { joins: joins, remainder: remainder }
   end
   
   def parse_limit_clause(sql)

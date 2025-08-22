@@ -3,6 +3,123 @@ class SqlValidator
     @evaluator = evaluator
   end
   
+  def validate_expression_with_context(expression, table_context)
+    # Check that all referenced columns exist in the table context
+    validate_columns_in_context(expression, table_context)
+    nil  # Return nil for success (no error)
+  rescue ExpressionEvaluator::ValidationError => e
+    { error: 'validation_error' }
+  end
+  
+  def validate_columns_in_context(expr, table_context)
+    case expr[:type]
+    when :column
+      # Check unqualified column exists in at least one table
+      column_name = expr[:name]
+      found = false
+      count = 0
+      
+      table_context[:aliases].each do |alias_name, table_name|
+        table_info = table_context[:tables][table_name]
+        if table_info[:columns].any? { |col| col[:name] == column_name }
+          found = true
+          count += 1
+        end
+      end
+      
+      raise ExpressionEvaluator::ValidationError, "Unknown column: #{column_name}" unless found
+      raise ExpressionEvaluator::ValidationError, "Ambiguous column: #{column_name}" if count > 1
+      
+    when :qualified_column
+      # Check qualified column exists
+      table_ref = expr[:table]
+      column_name = expr[:column]
+      
+      # Find the actual table name from the alias
+      actual_table = table_context[:aliases][table_ref]
+      raise ExpressionEvaluator::ValidationError, "Unknown table: #{table_ref}" unless actual_table
+      
+      table_info = table_context[:tables][actual_table]
+      unless table_info[:columns].any? { |col| col[:name] == column_name }
+        raise ExpressionEvaluator::ValidationError, "Unknown column: #{table_ref}.#{column_name}"
+      end
+      
+    when :binary_op
+      validate_columns_in_context(expr[:left], table_context) if expr[:left]
+      validate_columns_in_context(expr[:right], table_context) if expr[:right]
+      
+      # Validate operator types
+      if expr[:operator] == :equal || expr[:operator] == :not_equal
+        # Check if types are comparable
+        left_type = get_expression_type_with_context(expr[:left], table_context)
+        right_type = get_expression_type_with_context(expr[:right], table_context)
+        
+        # Can't compare integers with booleans
+        if (left_type == :integer && right_type == :boolean) ||
+           (left_type == :boolean && right_type == :integer)
+          raise ExpressionEvaluator::ValidationError, "Type mismatch in comparison"
+        end
+      end
+      
+    when :unary_op
+      validate_columns_in_context(expr[:operand], table_context) if expr[:operand]
+      
+    when :function
+      expr[:args].each { |arg| validate_columns_in_context(arg, table_context) } if expr[:args]
+    end
+  end
+  
+  def get_expression_type_with_context(expr, table_context)
+    case expr[:type]
+    when :literal
+      if expr[:value].nil?
+        nil
+      elsif expr[:value] == true || expr[:value] == false
+        :boolean
+      else
+        :integer
+      end
+    when :column
+      column_name = expr[:name]
+      table_context[:aliases].each do |alias_name, table_name|
+        table_info = table_context[:tables][table_name]
+        col_info = table_info[:columns].find { |col| col[:name] == column_name }
+        if col_info
+          return col_info[:type].downcase.to_sym
+        end
+      end
+      nil
+    when :qualified_column
+      table_ref = expr[:table]
+      column_name = expr[:column]
+      actual_table = table_context[:aliases][table_ref]
+      return nil unless actual_table
+      
+      table_info = table_context[:tables][actual_table]
+      col_info = table_info[:columns].find { |col| col[:name] == column_name }
+      col_info ? col_info[:type].downcase.to_sym : nil
+    when :binary_op
+      case expr[:operator]
+      when :plus, :minus, :star, :slash
+        :integer
+      when :lt, :gt, :lte, :gte, :equal, :not_equal, :and, :or
+        :boolean
+      end
+    when :unary_op
+      case expr[:operator]
+      when :minus
+        :integer
+      when :not
+        :boolean
+      end
+    when :function
+      case expr[:name]
+      when :abs, :mod
+        :integer
+      end
+    end
+  end
+  
   def validate_select_expressions(expressions, dummy_row_data, table_name = nil)
     expressions.each do |expr_info|
       # Validate qualified column references if present
