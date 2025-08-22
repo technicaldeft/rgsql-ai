@@ -77,8 +77,160 @@ class SqlExecutor
   end
   
   def execute_select_from(parsed_sql)
+    # Build and validate table context
+    table_context = build_and_validate_table_context(parsed_sql)
+    return table_context if has_error?(table_context)
+    
+    # Get row contexts from tables
+    row_contexts = fetch_row_contexts(parsed_sql, table_context)
+    return row_contexts if has_error?(row_contexts)
+    
+    # Build alias mapping for ORDER BY
+    alias_mapping = @query_planner.build_alias_mapping(parsed_sql[:expressions])
+    
+    # Validate query against schema
+    validation_result = validate_query(parsed_sql, table_context, alias_mapping)
+    return validation_result if has_error?(validation_result)
+    
+    # Process rows: filter, evaluate, and sort
+    processed_rows = process_rows(parsed_sql, row_contexts, table_context, alias_mapping)
+    return processed_rows if has_error?(processed_rows)
+    
+    # Build final result with column names
+    build_query_result(processed_rows, parsed_sql)
+  end
+  
+  def build_and_validate_table_context(parsed_sql)
     table_name = parsed_sql[:table_name]
     table_alias = parsed_sql[:table_alias]
+    joins = parsed_sql[:joins] || []
+    
+    build_table_context(table_name, table_alias, joins)
+  end
+  
+  def fetch_row_contexts(parsed_sql, table_context)
+    table_name = parsed_sql[:table_name]
+    table_alias = parsed_sql[:table_alias]
+    joins = parsed_sql[:joins] || []
+    
+    if joins.empty?
+      fetch_simple_row_contexts(table_name, table_alias, table_context)
+    else
+      execute_joins(table_name, table_alias, joins, table_context)
+    end
+  end
+  
+  def fetch_simple_row_contexts(table_name, table_alias, table_context)
+    table_info = @table_manager.get_table_info(table_name)
+    return { error: 'validation_error' } unless table_info
+    
+    all_data = @table_manager.get_all_rows(table_name)
+    return all_data if has_error?(all_data)
+    
+    # Build row context for single table
+    all_data[:rows].map do |row|
+      build_single_table_row_context(row, table_info, table_name, table_alias)
+    end
+  end
+  
+  def build_single_table_row_context(row, table_info, table_name, table_alias)
+    context = {}
+    table_info[:columns].each_with_index do |col_info, idx|
+      context[col_info[:name]] = row[idx]
+      # Also add qualified names
+      if table_alias
+        context["#{table_alias}.#{col_info[:name]}"] = row[idx]
+      else
+        context["#{table_name}.#{col_info[:name]}"] = row[idx]
+      end
+    end
+    context
+  end
+  
+  def validate_query(parsed_sql, table_context, alias_mapping)
+    joins = parsed_sql[:joins] || []
+    
+    begin
+      if joins.empty?
+        validate_simple_query(parsed_sql, table_context, alias_mapping)
+      else
+        validate_join_query(parsed_sql, table_context, alias_mapping)
+      end
+    rescue ExpressionEvaluator::ValidationError
+      validation_error
+    end
+  end
+  
+  def validate_simple_query(parsed_sql, table_context, alias_mapping)
+    table_name = parsed_sql[:table_name]
+    expressions = parsed_sql[:expressions]
+    where_clause = parsed_sql[:where]
+    order_by = parsed_sql[:order_by]
+    limit = parsed_sql[:limit]
+    offset = parsed_sql[:offset]
+    
+    # Build dummy row for validation
+    dummy_row_data = build_dummy_row_data(table_context[:tables][table_name])
+    
+    # Validate SELECT expressions
+    expressions.each do |expr_info|
+      @validator.validate_qualified_columns(expr_info[:expression], table_name)
+      @evaluator.validate_types(expr_info[:expression], dummy_row_data)
+    end
+    
+    # Validate WHERE clause
+    if where_clause
+      @evaluator.validate_types(where_clause, dummy_row_data)
+      where_type = @evaluator.get_expression_type(where_clause, dummy_row_data)
+      unless where_type == :boolean || where_type.nil?
+        return validation_error
+      end
+    end
+    
+    # Validate ORDER BY
+    if order_by
+      validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
+    end
+    
+    # Validate LIMIT and OFFSET
+    if limit && !@validator.validate_limit_offset_expression(limit)
+      return validation_error
+    end
+    
+    if offset && !@validator.validate_limit_offset_expression(offset)
+      return validation_error
+    end
+    
+    nil # No errors
+  end
+  
+  def validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
+    order_expr = order_by[:expression]
+    if order_expr[:type] == :column && alias_mapping[order_expr[:name]]
+      # Validate the aliased expression instead
+      @evaluator.validate_types(alias_mapping[order_expr[:name]], dummy_row_data)
+    else
+      @evaluator.validate_types(order_expr, dummy_row_data)
+    end
+  end
+  
+  def build_dummy_row_data(table_info)
+    dummy_row_data = {}
+    table_info[:columns].each do |col|
+      dummy_row_data[col[:name]] = case col[:type]
+      when 'INTEGER'
+        0
+      when 'BOOLEAN'
+        false
+      else
+        nil
+      end
+    end
+    dummy_row_data
+  end
+  
+  def process_rows(parsed_sql, row_contexts, table_context, alias_mapping)
+    table_name = parsed_sql[:table_name]
     expressions = parsed_sql[:expressions]
     where_clause = parsed_sql[:where]
     order_by = parsed_sql[:order_by]
@@ -86,174 +238,106 @@ class SqlExecutor
     offset = parsed_sql[:offset]
     joins = parsed_sql[:joins] || []
     
-    # Build table context for column resolution
-    table_context = build_table_context(table_name, table_alias, joins)
-    return table_context if has_error?(table_context)
-    
-    # Get rows from all tables
-    if joins.empty?
-      # Simple query without joins
-      table_info = @table_manager.get_table_info(table_name)
-      return { error: 'validation_error' } unless table_info
-      
-      all_data = @table_manager.get_all_rows(table_name)
-      return all_data if has_error?(all_data)
-      
-      # Build row context for single table
-      row_contexts = all_data[:rows].map do |row|
-        context = {}
-        table_info[:columns].each_with_index do |col_info, idx|
-          context[col_info[:name]] = row[idx]
-          # Also add qualified names
-          if table_alias
-            context["#{table_alias}.#{col_info[:name]}"] = row[idx]
-          else
-            context["#{table_name}.#{col_info[:name]}"] = row[idx]
-          end
-        end
-        context
-      end
-    else
-      # Query with joins
-      row_contexts = execute_joins(table_name, table_alias, joins, table_context)
-      return row_contexts if has_error?(row_contexts)
-    end
-    
-    result_rows = []
-    
-    # Build alias mapping for ORDER BY validation
-    alias_mapping = @query_planner.build_alias_mapping(expressions)
-    
-    # Validate expressions against schema
     begin
-      if joins.empty?
-        # For non-JOIN queries, validate with the original validation logic
-        dummy_row_data = {}
-        table_info = table_context[:tables][table_name]
-        table_info[:columns].each do |col|
-          # Use appropriate dummy values based on type
-          dummy_row_data[col[:name]] = case col[:type]
-          when 'INTEGER'
-            0
-          when 'BOOLEAN'
-            false
-          else
-            nil
-          end
-        end
-        
-        expressions.each do |expr_info|
-          # First validate qualified column references
-          @validator.validate_qualified_columns(expr_info[:expression], table_name)
-          @evaluator.validate_types(expr_info[:expression], dummy_row_data)
-        end
-        
-        if where_clause
-          @evaluator.validate_types(where_clause, dummy_row_data)
-          where_type = @evaluator.get_expression_type(where_clause, dummy_row_data)
-          unless where_type == :boolean || where_type.nil?
-            return validation_error
-          end
-        end
-        
-        if order_by
-          # Check if it's an alias reference first
-          order_expr = order_by[:expression]
-          if order_expr[:type] == :column && alias_mapping[order_expr[:name]]
-            # Validate the aliased expression instead
-            @evaluator.validate_types(alias_mapping[order_expr[:name]], dummy_row_data)
-          else
-            @evaluator.validate_types(order_expr, dummy_row_data)
-          end
-        end
-        
-        if limit
-          unless @validator.validate_limit_offset_expression(limit)
-            return validation_error
-          end
-        end
-        
-        if offset
-          unless @validator.validate_limit_offset_expression(offset)
-            return validation_error
-          end
-        end
+      # Filter and evaluate rows
+      filtered_rows = if joins.empty?
+        process_simple_rows(row_contexts, expressions, where_clause, table_context[:tables][table_name])
       else
-        # For JOIN queries, use context-based validation
-        validation_errors = validate_join_query(parsed_sql, table_context, alias_mapping)
-        return validation_errors if has_error?(validation_errors)
+        process_join_rows(row_contexts, expressions, where_clause, table_context)
       end
       
-      # Process rows with WHERE filtering
-      filtered_rows = []
-      
-      if joins.empty?
-        # For non-JOIN queries, use original evaluation
-        row_contexts.each do |row_context|
-          # Convert row_context back to simple row_data for non-join queries
-          row_data = {}
-          table_info = table_context[:tables][table_name]
-          table_info[:columns].each do |col|
-            row_data[col[:name]] = row_context[col[:name]]
-          end
-          
-          if where_clause
-            where_result = @evaluator.evaluate(where_clause, row_data)
-            next unless where_result == true
-          end
-          
-          # Evaluate SELECT expressions
-          result_row = expressions.map do |expr_info|
-            value = @evaluator.evaluate(expr_info[:expression], row_data)
-            BooleanConverter.convert(value)
-          end
-          
-          filtered_rows << { result: result_row, row_data: row_data }
-        end
-      else
-        # For JOIN queries, use context-based evaluation
-        row_contexts.each do |row_context|
-          if where_clause
-            where_result = @evaluator.evaluate_with_context(where_clause, row_context, table_context)
-            next unless where_result == true
-          end
-          
-          # Evaluate SELECT expressions
-          result_row = expressions.map do |expr_info|
-            value = @evaluator.evaluate_with_context(expr_info[:expression], row_context, table_context)
-            BooleanConverter.convert(value)
-          end
-          
-          filtered_rows << { result: result_row, context: row_context }
-        end
-      end
-      
-      # Apply ORDER BY if present
+      # Apply ORDER BY
       if order_by
-        if joins.empty?
-          filtered_rows = @row_sorter.sort_rows(filtered_rows, order_by, alias_mapping, table_info[:columns])
-        else
-          filtered_rows = @row_sorter.sort_rows_with_context(filtered_rows, order_by, alias_mapping, table_context)
-        end
+        filtered_rows = apply_ordering(filtered_rows, order_by, alias_mapping, table_context, joins)
       end
       
-      # Extract just the result rows
+      # Extract result rows and apply LIMIT/OFFSET
       result_rows = filtered_rows.map { |row_info| row_info[:result] }
       
-      # Apply LIMIT and OFFSET
       if limit || offset
         result_rows = @row_processor.apply_limit_offset(result_rows, limit, offset)
       end
       
+      result_rows
     rescue ExpressionEvaluator::DivisionByZeroError
-      return division_by_zero_error
+      division_by_zero_error
     rescue ExpressionEvaluator::ValidationError
-      return validation_error
+      validation_error
+    end
+  end
+  
+  def process_simple_rows(row_contexts, expressions, where_clause, table_info)
+    filtered_rows = []
+    
+    row_contexts.each do |row_context|
+      # Convert row_context to simple row_data
+      row_data = extract_row_data(row_context, table_info)
+      
+      # Apply WHERE filter
+      if where_clause
+        where_result = @evaluator.evaluate(where_clause, row_data)
+        next unless where_result == true
+      end
+      
+      # Evaluate SELECT expressions
+      result_row = evaluate_select_expressions(expressions, row_data)
+      filtered_rows << { result: result_row, row_data: row_data }
     end
     
-    # Build column names from expressions or aliases
-    column_names = @query_planner.extract_column_names(expressions)
+    filtered_rows
+  end
+  
+  def process_join_rows(row_contexts, expressions, where_clause, table_context)
+    filtered_rows = []
     
+    row_contexts.each do |row_context|
+      # Apply WHERE filter
+      if where_clause
+        where_result = @evaluator.evaluate_with_context(where_clause, row_context, table_context)
+        next unless where_result == true
+      end
+      
+      # Evaluate SELECT expressions
+      result_row = evaluate_select_expressions_with_context(expressions, row_context, table_context)
+      filtered_rows << { result: result_row, context: row_context }
+    end
+    
+    filtered_rows
+  end
+  
+  def extract_row_data(row_context, table_info)
+    row_data = {}
+    table_info[:columns].each do |col|
+      row_data[col[:name]] = row_context[col[:name]]
+    end
+    row_data
+  end
+  
+  def evaluate_select_expressions(expressions, row_data)
+    expressions.map do |expr_info|
+      value = @evaluator.evaluate(expr_info[:expression], row_data)
+      BooleanConverter.convert(value)
+    end
+  end
+  
+  def evaluate_select_expressions_with_context(expressions, row_context, table_context)
+    expressions.map do |expr_info|
+      value = @evaluator.evaluate_with_context(expr_info[:expression], row_context, table_context)
+      BooleanConverter.convert(value)
+    end
+  end
+  
+  def apply_ordering(filtered_rows, order_by, alias_mapping, table_context, joins)
+    if joins.empty?
+      table_info = table_context[:tables].values.first
+      @row_sorter.sort_rows(filtered_rows, order_by, alias_mapping, table_info[:columns])
+    else
+      @row_sorter.sort_rows_with_context(filtered_rows, order_by, alias_mapping, table_context)
+    end
+  end
+  
+  def build_query_result(result_rows, parsed_sql)
+    column_names = @query_planner.extract_column_names(parsed_sql[:expressions])
     { rows: result_rows, columns: column_names }
   end
   
