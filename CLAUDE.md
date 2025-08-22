@@ -36,3 +36,112 @@ You may be asked to refactor the code in order to make it easier to understand a
 + Avoid premature optimization and architecting of code until there is a need to.
 + It's fine not to perform any refactors, or to save refactoring ideas for later.
 + You MUST create a DIFFERENT commit each refactor. Do NOT put multiple refactors in a single commit
+
+## Current Architecture Overview
+
+The database implementation follows a modular architecture with clear separation of concerns:
+
+### Core Components
+
+**Server (`lib/server.rb`)**
+- TCP server listening on port 3003
+- Maintains persistent SqlParser and SqlExecutor instances
+- Handles client connections and message protocol
+
+**SQL Processing Pipeline**
+
+1. **SqlParser (`lib/sql_parser.rb`)**
+   - Entry point for SQL statement parsing
+   - Delegates to specialized parsers based on statement type
+   - Returns structured AST representation or parsing errors
+
+2. **Specialized Parsers**
+   - `SelectParser` - Handles SELECT statements with FROM, JOIN, WHERE, ORDER BY, LIMIT/OFFSET
+   - `TableParser` - Parses CREATE TABLE and DROP TABLE statements  
+   - `InsertParser` - Parses INSERT INTO statements with multiple value sets
+   - `ExpressionParser` - Tokenizes and parses SQL expressions into AST
+
+3. **SqlExecutor (`lib/sql_executor.rb`)**
+   - Orchestrates query execution
+   - Routes parsed statements to appropriate execution methods
+   - Handles both simple queries and complex JOINs
+   - Manages validation and error handling
+
+### Data Management
+
+**TableManager (`lib/table_manager.rb`)**
+- In-memory storage of table schemas and data
+- CRUD operations for tables and rows
+- Schema validation and constraint checking
+
+### Query Processing
+
+**QueryPlanner (`lib/query_planner.rb`)**
+- Validates queries against table schemas
+- Builds column mappings and alias resolution
+- Extracts column names from expressions
+
+**SqlValidator (`lib/sql_validator.rb`)**
+- Type checking for expressions
+- Column existence validation
+- JOIN condition validation
+- Context-aware validation for multi-table queries
+
+**ExpressionEvaluator (`lib/expression_evaluator.rb`)**
+- Evaluates SQL expressions against row data
+- Type inference and validation
+- NULL handling and three-valued logic
+- Support for operators, functions, and column references
+
+**RowProcessor (`lib/row_processor.rb`)**
+- Filters rows based on WHERE conditions
+- Projects columns for SELECT expressions
+- Applies LIMIT/OFFSET pagination
+
+**RowSorter (`lib/row_sorter.rb`)**
+- Implements ORDER BY sorting
+- Handles NULL ordering semantics
+- Supports alias references in ORDER BY
+
+### Supporting Modules
+
+**BooleanConverter (`lib/boolean_converter.rb`)**
+- Converts Ruby boolean values to SQL TRUE/FALSE strings
+
+**ErrorHandler (`lib/error_handler.rb`)**
+- Centralized error types and handling
+- Consistent error response format
+
+**SqlConstants (`lib/sql_constants.rb`)**
+- SQL keywords, token types, and patterns
+- Shared constants across parsers
+
+**ParsingUtils (`lib/parsing_utils.rb`)**
+- Common parsing utilities
+- Comma splitting with parenthesis awareness
+- Expression extraction helpers
+
+### Key Design Patterns
+
+1. **Separation of Concerns** - Each component has a single, well-defined responsibility
+2. **AST-based Processing** - SQL is parsed into an abstract syntax tree for evaluation
+3. **Context Objects** - Table and row contexts passed through evaluation pipeline
+4. **Modular Parsers** - Specialized parsers for different SQL constructs
+5. **Validator Pattern** - Separate validation from execution logic
+6. **Strategy Pattern** - Different execution strategies for simple vs JOIN queries
+
+### Data Flow
+
+1. Client sends SQL string to Server
+2. SqlParser converts string to AST
+3. SqlExecutor validates AST against schema
+4. Query processor evaluates expressions and filters rows
+5. Results formatted and returned to client
+
+This architecture supports the current feature set including:
+- Basic CRUD operations
+- Complex SELECT queries with multiple clauses
+- All types of JOINs (INNER, LEFT, RIGHT, FULL OUTER)
+- Expression evaluation with type checking
+- NULL handling and three-valued logic
+- Table aliasing and qualified column references
