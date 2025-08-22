@@ -7,6 +7,7 @@ require_relative 'row_processor'
 require_relative 'sql_validator'
 require_relative 'row_sorter'
 require_relative 'query_planner'
+require_relative 'row_context_builder'
 
 class SqlExecutor
   include ErrorHandler
@@ -17,6 +18,7 @@ class SqlExecutor
     @validator = SqlValidator.new(@evaluator)
     @row_sorter = RowSorter.new(@evaluator)
     @query_planner = QueryPlanner.new(@validator, @evaluator)
+    @row_context_builder = RowContextBuilder.new
   end
   
   def execute(parsed_sql)
@@ -129,23 +131,10 @@ class SqlExecutor
     
     # Build row context for single table
     all_data[:rows].map do |row|
-      build_single_table_row_context(row, table_info, table_name, table_alias)
+      @row_context_builder.build_single_table_context(row, table_info, table_name, table_alias)
     end
   end
   
-  def build_single_table_row_context(row, table_info, table_name, table_alias)
-    context = {}
-    table_info[:columns].each_with_index do |col_info, idx|
-      context[col_info[:name]] = row[idx]
-      # Also add qualified names
-      if table_alias
-        context["#{table_alias}.#{col_info[:name]}"] = row[idx]
-      else
-        context["#{table_name}.#{col_info[:name]}"] = row[idx]
-      end
-    end
-    context
-  end
   
   def validate_query(parsed_sql, table_context, alias_mapping)
     joins = parsed_sql[:joins] || []
@@ -306,11 +295,7 @@ class SqlExecutor
   end
   
   def extract_row_data(row_context, table_info)
-    row_data = {}
-    table_info[:columns].each do |col|
-      row_data[col[:name]] = row_context[col[:name]]
-    end
-    row_data
+    @row_context_builder.extract_row_data(row_context, table_info)
   end
   
   def evaluate_select_expressions(expressions, row_data)
@@ -390,12 +375,7 @@ class SqlExecutor
     
     # Build initial row contexts from FROM table
     row_contexts = from_data[:rows].map do |row|
-      context = {}
-      from_table_info[:columns].each_with_index do |col_info, idx|
-        context[col_info[:name]] = row[idx]
-        context["#{actual_from_alias}.#{col_info[:name]}"] = row[idx]
-      end
-      context
+      @row_context_builder.build_single_table_context(row, from_table_info, from_table, from_alias)
     end
     
     # Process each JOIN
@@ -418,11 +398,7 @@ class SqlExecutor
         
         join_data[:rows].each do |join_row|
           # Build context for joined row
-          join_context = left_context.dup
-          join_table_info[:columns].each_with_index do |col_info, idx|
-            join_context[col_info[:name]] = join_row[idx]
-            join_context["#{join_alias}.#{col_info[:name]}"] = join_row[idx]
-          end
+          join_context = @row_context_builder.build_join_context(left_context, join_row, join_table_info, join_table, join_alias)
           
           # Evaluate JOIN condition
           begin
@@ -441,11 +417,7 @@ class SqlExecutor
         if !matched
           if join_type == "LEFT_OUTER" || join_type == "FULL_OUTER"
             # Add row with NULLs for joined table
-            join_context = left_context.dup
-            join_table_info[:columns].each do |col_info|
-              join_context[col_info[:name]] = nil
-              join_context["#{join_alias}.#{col_info[:name]}"] = nil
-            end
+            join_context = @row_context_builder.build_join_context(left_context, nil, join_table_info, join_table, join_alias)
             new_row_contexts << join_context
           end
         end
@@ -459,11 +431,7 @@ class SqlExecutor
           
           # Check if this row was matched
           row_contexts.each do |left_context|
-            join_context = left_context.dup
-            join_table_info[:columns].each_with_index do |col_info, idx|
-              join_context[col_info[:name]] = join_row[idx]
-              join_context["#{join_alias}.#{col_info[:name]}"] = join_row[idx]
-            end
+            join_context = @row_context_builder.build_join_context(left_context, join_row, join_table_info, join_table, join_alias)
             
             begin
               condition_result = @evaluator.evaluate_with_context(join_condition, join_context, table_context)
