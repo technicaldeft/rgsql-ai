@@ -1,5 +1,6 @@
 require_relative 'expression_matcher'
 require_relative 'aggregate_evaluator'
+require_relative 'validation_context'
 
 class SqlValidator
   def initialize(evaluator)
@@ -348,14 +349,13 @@ class SqlValidator
   end
   
   def validate_group_by_expression_with_context(select_expr, group_by_expr, table_context)
-    # Similar to validate_group_by_expression but uses table context
+    validation_context = ValidationContext.new(table_context, @evaluator, self)
+    
     if select_expr[:type] == :aggregate_function
       validate_aggregate_expression_with_context(select_expr, table_context)
     elsif contains_aggregate_function?(select_expr)
-      # For expressions containing aggregates, validate the aggregate parts
       validate_aggregate_expression_with_context(select_expr, table_context)
     else
-      # For non-aggregate expressions, check they're in GROUP BY
       validate_non_aggregate_in_group_by_context(select_expr, group_by_expr, table_context)
     end
   end

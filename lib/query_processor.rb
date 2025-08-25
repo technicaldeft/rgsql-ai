@@ -1,5 +1,6 @@
 require_relative 'boolean_converter'
 require_relative 'aggregate_evaluator'
+require_relative 'validation_context'
 
 class QueryProcessor
   def initialize(evaluator, row_processor, validator, group_by_processor)
@@ -56,24 +57,6 @@ class QueryProcessor
     end
   end
   
-  def validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
-    order_expr = order_by[:expression]
-    if order_expr[:type] == :column && alias_mapping[order_expr[:name]]
-      # Check if the aliased expression contains aggregate functions
-      aliased_expr = alias_mapping[order_expr[:name]]
-      if @aggregate_evaluator.has_aggregate_functions?(aliased_expr)
-        @aggregate_evaluator.validate_aggregate_types(aliased_expr, dummy_row_data)
-      else
-        @evaluator.validate_types(aliased_expr, dummy_row_data)
-      end
-    else
-      if @aggregate_evaluator.has_aggregate_functions?(order_expr)
-        @aggregate_evaluator.validate_aggregate_types(order_expr, dummy_row_data)
-      else
-        @evaluator.validate_types(order_expr, dummy_row_data)
-      end
-    end
-  end
 end
 
 class SimpleQueryProcessor < QueryProcessor
@@ -166,9 +149,14 @@ class SimpleQueryProcessor < QueryProcessor
     limit = parsed_sql[:limit]
     offset = parsed_sql[:offset]
     
+    # Create validation context for simple single-table queries
+    # Use the existing table_context parameter which already has the table info
+    validation_context = ValidationContext.new(table_context, @evaluator, @validator)
+                        .with_aliases(alias_mapping)
+    
     # Check if we have aggregate functions in SELECT
     has_aggregates = expressions.any? do |expr_info|
-      @aggregate_evaluator.has_aggregate_functions?(expr_info[:expression])
+      validation_context.has_aggregate_functions?(expr_info[:expression])
     end
     
     # Validate GROUP BY clause first
@@ -181,15 +169,8 @@ class SimpleQueryProcessor < QueryProcessor
       end
     elsif has_aggregates
       # Implicit grouping - validate aggregate expressions
-      expressions.each do |expr_info|
-        if @aggregate_evaluator.has_aggregate_functions?(expr_info[:expression])
-          # Validate aggregate expression
-          @validator.validate_expression_with_aggregates(expr_info[:expression], dummy_row_data)
-        else
-          # Non-aggregate expressions are not allowed in implicit grouping
-          raise ExpressionEvaluator::ValidationError, "Non-aggregate expression not allowed without GROUP BY"
-        end
-      end
+      result = validation_context.validate_implicit_grouping(expressions)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     else
       # Validate SELECT expressions normally
       expressions.each do |expr_info|
@@ -200,25 +181,25 @@ class SimpleQueryProcessor < QueryProcessor
     
     # Validate WHERE clause
     if where_clause
-      @evaluator.validate_types(where_clause, dummy_row_data)
-      where_type = @evaluator.get_expression_type(where_clause, dummy_row_data)
-      unless where_type == :boolean || where_type.nil?
-        raise ExpressionEvaluator::ValidationError
-      end
+      result = validation_context.validate_where_clause(where_clause)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
     # Validate ORDER BY
     if order_by
-      validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
+      result = validation_context.validate_order_by(order_by)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
     # Validate LIMIT and OFFSET
-    if limit && !@validator.validate_limit_offset_expression(limit)
-      raise ExpressionEvaluator::ValidationError
+    if limit
+      result = validation_context.validate_limit_offset(limit)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
-    if offset && !@validator.validate_limit_offset_expression(offset)
-      raise ExpressionEvaluator::ValidationError
+    if offset
+      result = validation_context.validate_limit_offset(offset)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
     nil
@@ -316,61 +297,56 @@ class JoinQueryProcessor < QueryProcessor
     offset = parsed_sql[:offset]
     joins = parsed_sql[:joins]
     
+    # Create validation context for join queries
+    validation_context = ValidationContext.new(table_context, @evaluator, @validator)
+                        .with_aliases(alias_mapping)
+    
     # Check if we have aggregate functions in SELECT
     has_aggregates = expressions.any? do |expr_info|
-      @aggregate_evaluator.has_aggregate_functions?(expr_info[:expression])
+      validation_context.has_aggregate_functions?(expr_info[:expression])
     end
     
     # Validate SELECT expressions with context and GROUP BY
     if group_by
-      # Validate GROUP BY expression
-      validation_error = @validator.validate_expression_with_context(group_by, table_context)
-      raise ExpressionEvaluator::ValidationError if validation_error
-      
-      # Validate each SELECT expression is valid with GROUP BY
-      expressions.each do |expr_info|
-        @validator.validate_group_by_expression_with_context(expr_info[:expression], group_by, table_context)
-      end
+      # Validate GROUP BY expression and SELECT expressions
+      result = validation_context.validate_group_by_clause(expressions, group_by)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     elsif has_aggregates
       # Implicit grouping - validate aggregate expressions
-      expressions.each do |expr_info|
-        if @aggregate_evaluator.has_aggregate_functions?(expr_info[:expression])
-          # Validate aggregate expression with context
-          @validator.validate_aggregate_expression_with_context(expr_info[:expression], table_context)
-        else
-          # Non-aggregate expressions are not allowed in implicit grouping
-          raise ExpressionEvaluator::ValidationError, "Non-aggregate expression not allowed without GROUP BY"
-        end
-      end
+      result = validation_context.validate_implicit_grouping(expressions)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     else
       # Normal validation for non-aggregate queries
       expressions.each do |expr_info|
-        validation_error = @validator.validate_expression_with_context(expr_info[:expression], table_context)
-        raise ExpressionEvaluator::ValidationError if validation_error
+        result = validation_context.validate_expression(expr_info[:expression])
+        raise ExpressionEvaluator::ValidationError if result && result[:error]
       end
     end
     
     # Validate WHERE clause
     if where_clause
-      validation_error = @validator.validate_expression_with_context(where_clause, table_context)
-      raise ExpressionEvaluator::ValidationError if validation_error
+      result = validation_context.validate_where_clause(where_clause)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
     # Validate JOINs
-    validate_joins(joins, table_context)
+    validate_joins(joins, table_context, validation_context)
     
     # Validate ORDER BY
     if order_by
-      validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
+      result = validation_context.validate_order_by(order_by)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
     # Validate LIMIT and OFFSET
-    if limit && !@validator.validate_limit_offset_expression(limit)
-      raise ExpressionEvaluator::ValidationError
+    if limit
+      result = validation_context.validate_limit_offset(limit)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
-    if offset && !@validator.validate_limit_offset_expression(offset)
-      raise ExpressionEvaluator::ValidationError
+    if offset
+      result = validation_context.validate_limit_offset(offset)
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
     
     nil
@@ -392,32 +368,10 @@ class JoinQueryProcessor < QueryProcessor
     groups.values
   end
   
-  def validate_joins(joins, table_context)
+  def validate_joins(joins, table_context, validation_context)
     joins.each do |join|
-      condition = join[:on]
-      
-      # First validate the expression
-      validation_error = @validator.validate_expression_with_context(condition, table_context)
-      raise ExpressionEvaluator::ValidationError if validation_error
-      
-      # Check that JOIN condition evaluates to boolean
-      join_type = @validator.get_expression_type_with_context(condition, table_context)
-      unless join_type == :boolean || join_type.nil?
-        raise ExpressionEvaluator::ValidationError
-      end
-      
-      # Additional validation for comparison operators
-      if condition[:type] == :binary_op && 
-         (condition[:operator] == :equal || condition[:operator] == :not_equal)
-        
-        left_type = @validator.get_expression_type_with_context(condition[:left], table_context)
-        right_type = @validator.get_expression_type_with_context(condition[:right], table_context)
-        
-        if (left_type == :integer && right_type == :boolean) ||
-           (left_type == :boolean && right_type == :integer)
-          raise ExpressionEvaluator::ValidationError
-        end
-      end
+      result = validation_context.validate_join_condition(join[:on])
+      raise ExpressionEvaluator::ValidationError if result && result[:error]
     end
   end
 end
