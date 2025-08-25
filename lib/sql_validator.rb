@@ -1,9 +1,11 @@
 require_relative 'expression_matcher'
+require_relative 'aggregate_evaluator'
 
 class SqlValidator
   def initialize(evaluator)
     @evaluator = evaluator
     @expression_matcher = ExpressionMatcher.new
+    @aggregate_evaluator = AggregateEvaluator.new(evaluator)
   end
   
   def validate_expression_with_context(expression, table_context)
@@ -120,6 +122,11 @@ class SqlValidator
       when :abs, :mod
         :integer
       end
+    when :aggregate_function
+      case expr[:name]
+      when :count, :sum
+        :integer
+      end
     end
   end
   
@@ -145,10 +152,17 @@ class SqlValidator
       validate_qualified_columns(expr[:operand], table_name) if expr[:operand]
     when :function
       expr[:args].each { |arg| validate_qualified_columns(arg, table_name) } if expr[:args]
+    when :aggregate_function
+      expr[:args].each { |arg| validate_qualified_columns(arg, table_name) } if expr[:args] && !expr[:args].empty?
     end
   end
   
   def validate_where_clause(where_clause, dummy_row_data)
+    # Check for aggregate functions in WHERE clause
+    if @aggregate_evaluator.has_aggregate_functions?(where_clause)
+      raise ExpressionEvaluator::ValidationError, "Aggregate functions not allowed in WHERE clause"
+    end
+    
     @evaluator.validate_types(where_clause, dummy_row_data)
     
     # Check that WHERE clause evaluates to boolean or NULL
@@ -157,8 +171,24 @@ class SqlValidator
   end
   
   def validate_group_by_expression(select_expr, group_by_expr, dummy_row_data)
-    # Validate types first
-    @evaluator.validate_types(select_expr, dummy_row_data)
+    # Validate types first - but handle aggregate functions specially
+    if select_expr[:type] == :aggregate_function
+      @aggregate_evaluator.validate_aggregate_types(select_expr, dummy_row_data)
+    elsif contains_aggregate_function?(select_expr)
+      # For expressions containing aggregates, validate the aggregate parts
+      validate_expression_with_aggregates(select_expr, dummy_row_data)
+    else
+      @evaluator.validate_types(select_expr, dummy_row_data)
+    end
+    
+    # Aggregate functions are always allowed with GROUP BY
+    return if select_expr[:type] == :aggregate_function
+    
+    # If the expression contains aggregate functions, validate only the non-aggregate parts
+    if contains_aggregate_function?(select_expr)
+      validate_non_aggregate_parts_in_group_by(select_expr, group_by_expr, dummy_row_data)
+      return
+    end
     
     # First check if the entire SELECT expression matches the GROUP BY expression
     return if @expression_matcher.expressions_equal?(select_expr, group_by_expr)
@@ -180,6 +210,37 @@ class SqlValidator
     select_columns.each do |col|
       unless column_allowed_in_group_by?(col, group_by_expr)
         raise ExpressionEvaluator::ValidationError, "Column not in GROUP BY: #{col[:name] || col[:column]}"
+      end
+    end
+  end
+  
+  def contains_aggregate_function?(expr)
+    case expr[:type]
+    when :aggregate_function
+      true
+    when :binary_op
+      contains_aggregate_function?(expr[:left]) || contains_aggregate_function?(expr[:right])
+    when :unary_op
+      contains_aggregate_function?(expr[:operand])
+    when :function
+      expr[:args]&.any? { |arg| contains_aggregate_function?(arg) } || false
+    else
+      false
+    end
+  end
+  
+  def validate_non_aggregate_parts_in_group_by(expr, group_by_expr, dummy_row_data)
+    case expr[:type]
+    when :binary_op
+      validate_non_aggregate_parts_in_group_by(expr[:left], group_by_expr, dummy_row_data) if expr[:left]
+      validate_non_aggregate_parts_in_group_by(expr[:right], group_by_expr, dummy_row_data) if expr[:right]
+    when :unary_op
+      validate_non_aggregate_parts_in_group_by(expr[:operand], group_by_expr, dummy_row_data) if expr[:operand]
+    when :function
+      expr[:args]&.each { |arg| validate_non_aggregate_parts_in_group_by(arg, group_by_expr, dummy_row_data) }
+    when :column, :qualified_column
+      unless column_allowed_in_group_by?(expr, group_by_expr)
+        raise ExpressionEvaluator::ValidationError, "Column not in GROUP BY: #{expr[:name] || expr[:column]}"
       end
     end
   end
@@ -215,6 +276,9 @@ class SqlValidator
   def validate_limit_offset_expression(expr)
     # Cannot contain column references
     return false if @expression_matcher.contains_column_reference?(expr)
+    
+    # Cannot contain aggregate functions
+    return false if @aggregate_evaluator.has_aggregate_functions?(expr)
     
     @evaluator.validate_types(expr, {})
     expr_type = @evaluator.get_expression_type(expr, {})
@@ -265,5 +329,93 @@ class SqlValidator
     else
       false
     end
+  end
+  
+  def validate_expression_with_aggregates(expr, dummy_row_data)
+    case expr[:type]
+    when :aggregate_function
+      @aggregate_evaluator.validate_aggregate_types(expr, dummy_row_data)
+    when :binary_op
+      validate_expression_with_aggregates(expr[:left], dummy_row_data) if expr[:left]
+      validate_expression_with_aggregates(expr[:right], dummy_row_data) if expr[:right]
+    when :unary_op
+      validate_expression_with_aggregates(expr[:operand], dummy_row_data) if expr[:operand]
+    when :function
+      expr[:args]&.each { |arg| validate_expression_with_aggregates(arg, dummy_row_data) }
+    else
+      @evaluator.validate_types(expr, dummy_row_data)
+    end
+  end
+  
+  def validate_group_by_expression_with_context(select_expr, group_by_expr, table_context)
+    # Similar to validate_group_by_expression but uses table context
+    if select_expr[:type] == :aggregate_function
+      validate_aggregate_expression_with_context(select_expr, table_context)
+    elsif contains_aggregate_function?(select_expr)
+      # For expressions containing aggregates, validate the aggregate parts
+      validate_aggregate_expression_with_context(select_expr, table_context)
+    else
+      # For non-aggregate expressions, check they're in GROUP BY
+      validate_non_aggregate_in_group_by_context(select_expr, group_by_expr, table_context)
+    end
+  end
+  
+  def validate_aggregate_expression_with_context(expr, table_context)
+    case expr[:type]
+    when :aggregate_function
+      # Check for nested aggregates
+      if @aggregate_evaluator.has_nested_aggregate?(expr)
+        raise ExpressionEvaluator::ValidationError, "Cannot nest aggregate functions"
+      end
+      
+      # Validate the argument if present
+      if expr[:args] && expr[:args].first
+        validate_columns_in_context(expr[:args].first, table_context)
+        
+        # For SUM, check that the argument is an integer type
+        if expr[:name] == :sum
+          arg_type = get_expression_type_with_context(expr[:args].first, table_context)
+          if arg_type && arg_type != :integer
+            raise ExpressionEvaluator::ValidationError, "SUM requires integer argument"
+          end
+        end
+      elsif expr[:name] == :sum
+        # SUM requires an argument
+        raise ExpressionEvaluator::ValidationError, "SUM requires an argument"
+      end
+    when :binary_op
+      validate_aggregate_expression_with_context(expr[:left], table_context) if expr[:left]
+      validate_aggregate_expression_with_context(expr[:right], table_context) if expr[:right]
+    when :unary_op
+      validate_aggregate_expression_with_context(expr[:operand], table_context) if expr[:operand]
+    when :function
+      expr[:args]&.each { |arg| validate_aggregate_expression_with_context(arg, table_context) }
+    else
+      validate_columns_in_context(expr, table_context)
+    end
+  end
+  
+  def validate_non_aggregate_in_group_by_context(expr, group_by_expr, table_context)
+    # First check if the entire expression matches the GROUP BY expression
+    return if expressions_equal_in_context?(expr, group_by_expr)
+    
+    # Extract columns from the expression
+    columns = @expression_matcher.extract_columns_from_expression(expr)
+    
+    # Check each column is in GROUP BY
+    columns.each do |col|
+      unless column_in_group_by_context?(col, group_by_expr)
+        raise ExpressionEvaluator::ValidationError, "Column not in GROUP BY: #{col[:name] || col[:column]}"
+      end
+    end
+  end
+  
+  def expressions_equal_in_context?(expr1, expr2)
+    @expression_matcher.expressions_equal?(expr1, expr2)
+  end
+  
+  def column_in_group_by_context?(column, group_by_expr)
+    @expression_matcher.expressions_equal?(column, group_by_expr) ||
+    @expression_matcher.expression_contains_column?(group_by_expr, column)
   end
 end

@@ -173,9 +173,27 @@ class SqlExecutor
     begin
       query_processor = select_query_processor(joins)
       
-      # Handle GROUP BY if present
+      # Check if we have aggregate functions in SELECT
+      has_aggregates = expressions.any? do |expr_info|
+        AggregateEvaluator.new(@evaluator).has_aggregate_functions?(expr_info[:expression])
+      end
+      
+      # Handle GROUP BY or implicit grouping
       if group_by
         result_rows = query_processor.process_grouped_rows(row_contexts, expressions, where_clause, group_by, table_context.to_hash)
+        
+        # Apply ORDER BY to grouped results
+        if order_by
+          result_rows = apply_ordering_to_result_rows(result_rows, order_by, alias_mapping, expressions)
+        end
+      elsif has_aggregates
+        # Implicit grouping - treat all rows as a single group
+        result_rows = query_processor.process_implicit_group(row_contexts, expressions, where_clause, table_context.to_hash)
+        
+        # Apply ORDER BY to grouped results
+        if order_by
+          result_rows = apply_ordering_to_result_rows(result_rows, order_by, alias_mapping, expressions)
+        end
       else
         # Filter and evaluate rows
         filtered_rows = query_processor.process_rows(row_contexts, expressions, where_clause, table_context.to_hash)
@@ -229,6 +247,25 @@ class SqlExecutor
     else
       @row_sorter.sort_rows_with_context(filtered_rows, order_by, alias_mapping, table_context.to_hash)
     end
+  end
+  
+  def apply_ordering_to_result_rows(result_rows, order_by, alias_mapping, expressions)
+    # Create synthetic row data from result rows for ordering
+    rows_with_data = result_rows.map do |row|
+      row_data = {}
+      expressions.each_with_index do |expr_info, idx|
+        if expr_info[:alias]
+          row_data[expr_info[:alias]] = row[idx]
+        end
+      end
+      { result: row, row_data: row_data }
+    end
+    
+    # Sort using the row sorter
+    sorted_rows = @row_sorter.sort_result_rows(rows_with_data, order_by, alias_mapping)
+    
+    # Extract just the result rows
+    sorted_rows.map { |row_info| row_info[:result] }
   end
   
   def build_query_result(result_rows, parsed_sql)

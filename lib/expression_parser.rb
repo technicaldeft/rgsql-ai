@@ -348,6 +348,10 @@ class ExpressionParser
       { type: :function, name: :abs, args: args }
     when 'MOD'
       { type: :function, name: :mod, args: args }
+    when 'COUNT'
+      { type: :aggregate_function, name: :count, args: args }
+    when 'SUM'
+      { type: :aggregate_function, name: :sum, args: args }
     else
       { type: :function, name: name.downcase.to_sym, args: args }
     end

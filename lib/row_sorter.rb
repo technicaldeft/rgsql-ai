@@ -21,6 +21,15 @@ class RowSorter
     end
   end
   
+  def sort_result_rows(rows_with_data, order_by, alias_mapping)
+    rows_with_data.sort do |a, b|
+      a_value = evaluate_result_sort_value(a, order_by, alias_mapping)
+      b_value = evaluate_result_sort_value(b, order_by, alias_mapping)
+      
+      apply_sort_direction(compare_values_for_sort(a_value, b_value), order_by[:direction])
+    end
+  end
+  
   private
   
   def evaluate_sort_value(row_info, order_by, alias_mapping)
@@ -40,6 +49,20 @@ class RowSorter
       @evaluator.evaluate_with_context(alias_mapping[expr[:name]], row_info[:context], table_context)
     else
       @evaluator.evaluate_with_context(expr, row_info[:context], table_context)
+    end
+  end
+  
+  def evaluate_result_sort_value(row_info, order_by, alias_mapping)
+    expr = order_by[:expression]
+    
+    # For result rows, we can directly access values by alias
+    if expr[:type] == :column && row_info[:row_data][expr[:name]]
+      row_info[:row_data][expr[:name]]
+    elsif is_alias_reference?(expr, alias_mapping)
+      # This shouldn't happen with our current setup but keep for safety
+      @evaluator.evaluate(alias_mapping[expr[:name]], row_info[:row_data])
+    else
+      @evaluator.evaluate(expr, row_info[:row_data])
     end
   end
   

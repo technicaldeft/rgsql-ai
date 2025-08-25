@@ -1,4 +1,4 @@
-require 'server'
+require_relative 'server'
 
 class RgSql
   def self.start_server
