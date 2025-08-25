@@ -49,23 +49,57 @@
 - Centralized context-related logic
 - Better discoverability of available operations
 
-## 📋 FUTURE REFACTORING IDEAS
+### Validation Context (COMPLETED)
 
-### Validation Context
+**Problem:** Validation logic was spread across multiple classes and methods with validation state passed around loosely.
 
-**Problem:** Validation logic is spread across multiple classes and methods with validation state passed around loosely.
-
-**Proposed Solution:** Create a `ValidationContext` class that:
+**Solution Implemented:** Created `ValidationContext` class that:
 - Encapsulates validation state (schemas, dummy rows, etc.)
 - Provides a consistent interface for all validation needs
-- Can build appropriate dummy data for type checking
+- Builds appropriate dummy data for type checking
 - Tracks validation errors with better context
 
-**Expected Benefits:**
-- Centralized validation logic
+**Benefits Achieved:**
+- Centralized validation logic in one place
 - Better error messages with context
 - Easier to extend validation rules
-- Clearer validation flow
+- Clearer validation flow with less parameter passing
+- Simplified query processors by delegating validation
+
+### Expression Visitor Pattern (COMPLETED)
+
+**Problem:** Many operations needed to traverse expressions leading to duplicate recursive code patterns.
+
+**Solution Implemented:** Created visitor pattern infrastructure:
+- `ExpressionVisitor` base class with visit methods for each expression type
+- `AggregateDetectorVisitor` for finding aggregate functions
+- `ColumnExtractorVisitor` for extracting column references
+- `ExpressionValidatorVisitor` for validation logic
+- `ExpressionTransformVisitor` for expression transformations
+
+**Benefits Achieved:**
+- Eliminated duplicate traversal code
+- Easier to add new operations on expressions
+- Clear separation of traversal from operation logic
+- More maintainable and extensible expression handling
+
+### Aggregate Function Registry (COMPLETED)
+
+**Problem:** Aggregate functions were hardcoded in multiple places (parser, evaluator, validator).
+
+**Solution Implemented:** Created `AggregateFunctionRegistry` that:
+- Defines available aggregate functions and their properties
+- Centralizes type requirements (e.g., SUM requires integer)
+- Provides a single source of truth for aggregate function behavior
+- Makes it easy to add new aggregate functions
+
+**Benefits Achieved:**
+- Easier to add new aggregate functions (MIN, MAX, AVG, etc.)
+- Consistent validation across the codebase
+- Better separation of concerns
+- Single source of truth for function metadata
+
+## 📋 FUTURE REFACTORING IDEAS
 
 ### Expression Normalization
 
@@ -82,6 +116,22 @@
 - Easier expression comparison
 - Reduced duplication of normalization logic
 - Better support for future query optimization
+
+### Query Execution Pipeline
+
+**Problem:** Query execution flow could be more explicit with clearer stages.
+
+**Proposed Solution:** Create a pipeline architecture:
+- Each stage has clear inputs and outputs
+- Stages can be composed and reordered
+- Better debugging and profiling capabilities
+- Clear separation between logical and physical execution
+
+**Expected Benefits:**
+- Easier to understand execution flow
+- Better testability of individual stages
+- Foundation for query optimization
+- Easier to add new execution features
 
 ### Row Context Builder Expansion
 
@@ -117,13 +167,15 @@
 
 ## 🎯 Benefits of Completed Refactorings
 
-The three completed refactorings have significantly improved the codebase:
+The six completed refactorings have significantly improved the codebase:
 
 1. **Better Testing** - Smaller, focused classes are easier to test in isolation
 2. **Clearer Intent** - Each class has a single, well-defined purpose
-3. **Easier Extension** - Adding new features like aggregate functions will be simpler
+3. **Easier Extension** - Adding new features is now much simpler
 4. **Reduced Complexity** - Less branching logic and clearer data flow
 5. **Better Maintainability** - Code is more modular and easier to understand
+6. **Improved Validation** - Centralized validation with better error handling
+7. **Cleaner Abstractions** - Visitor pattern and registries provide clear extension points
 
 ## 🔍 Insights from Aggregate Functions Implementation
 
@@ -139,34 +191,6 @@ The implementation of aggregate functions (COUNT and SUM) revealed several archi
 
 ### New Refactoring Ideas from Implementation
 
-#### Aggregate Function Registry
-
-**Problem:** Aggregate functions are currently hardcoded in multiple places (parser, evaluator, validator).
-
-**Proposed Solution:** Create an `AggregateFunctionRegistry` that:
-- Defines available aggregate functions and their properties
-- Centralizes type requirements (e.g., SUM requires integer)
-- Provides a single source of truth for aggregate function behavior
-- Makes it easy to add new aggregate functions (MIN, MAX, AVG, etc.)
-
-**Expected Benefits:**
-- Easier to add new aggregate functions
-- Consistent validation across the codebase
-- Better separation of concerns
-
-#### Expression Visitor Pattern
-
-**Problem:** Many operations need to traverse expressions (validation, evaluation, aggregate detection), leading to similar recursive code patterns.
-
-**Proposed Solution:** Implement a visitor pattern for expressions:
-- `ExpressionVisitor` base class with methods for each expression type
-- Specialized visitors for different operations
-- Consistent traversal logic
-
-**Expected Benefits:**
-- Eliminate duplicate traversal code
-- Easier to add new operations on expressions
-- Clearer separation of traversal from operation logic
 
 #### Implicit Grouping as Explicit Concept
 
@@ -182,20 +206,20 @@ The implementation of aggregate functions (COUNT and SUM) revealed several archi
 - Fewer special cases
 - Better code clarity
 
-### Validation Complexity
+### Lessons Learned from Refactorings
 
-The aggregate function implementation significantly increased validation complexity:
-- Different validation rules for expressions with/without aggregates
-- Context-dependent validation (aggregates allowed in SELECT but not WHERE)
-- Interaction between GROUP BY and aggregate validation
+The recent refactorings revealed several important patterns:
 
-This reinforces the need for the **Validation Context** refactoring mentioned earlier.
+1. **Validation Complexity** - The ValidationContext successfully addressed the complex validation requirements
+2. **Visitor Pattern Power** - The visitor pattern dramatically simplified expression traversal operations
+3. **Registry Pattern** - The aggregate function registry provides a clean extension point for new functions
+4. **Separation of Concerns** - Each refactoring improved separation between different responsibilities
 
 ## 📊 Updated Priority for Future Work
 
-Based on the aggregate functions implementation experience:
+Based on the completed refactorings:
 
-1. **Validation Context** - The validation logic has become complex enough to warrant extraction
-2. **Expression Visitor Pattern** - Would simplify many expression operations
-3. **Aggregate Function Registry** - Would make adding MIN, MAX, AVG much easier
-4. **Expression Normalization** - Still valuable for consistent expression handling
+1. **Expression Normalization** - Would further improve expression handling consistency
+2. **Query Execution Pipeline** - Would provide clearer execution flow
+3. **Query Planner Enhancement** - Build on current foundation for optimization
+4. **Row Context Builder Expansion** - Simplify row handling across query types
