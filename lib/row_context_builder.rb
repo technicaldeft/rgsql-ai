@@ -30,12 +30,4 @@ class RowContextBuilder
     
     context
   end
-  
-  def extract_row_data(row_context, table_info)
-    row_data = {}
-    table_info[:columns].each do |col|
-      row_data[col[:name]] = row_context[col[:name]]
-    end
-    row_data
-  end
 end

@@ -9,13 +9,6 @@ class AggregateFunctionRegistry
       @return_type = return_type
       @default_value = default_value
     end
-    
-    def validate_argument(arg_type)
-      return true unless @requires_argument
-      return true if @argument_type.nil?
-      
-      arg_type == @argument_type
-    end
   end
   
   def self.instance
@@ -37,28 +30,6 @@ class AggregateFunctionRegistry
   
   def exists?(name)
     @functions.key?(name)
-  end
-  
-  def validate_function(name, arg_type = nil)
-    function = get(name)
-    return false unless function
-    
-    function.validate_argument(arg_type)
-  end
-  
-  def get_return_type(name)
-    function = get(name)
-    function&.return_type
-  end
-  
-  def get_default_value(name)
-    function = get(name)
-    function&.default_value
-  end
-  
-  def requires_argument?(name)
-    function = get(name)
-    function&.requires_argument
   end
   
   private

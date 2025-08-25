@@ -304,34 +304,6 @@ class SqlValidator
     true
   end
   
-  
-  def contains_alias_in_expression?(expr, alias_mapping)
-    return false unless expr
-    
-    case expr[:type]
-    when :column
-      # Check if this is an alias used in an expression (not as a simple reference)
-      false  # Simple column references are checked separately
-    when :binary_op
-      # Check if either operand references an alias
-      left_contains = expr[:left][:type] == :column && alias_mapping[expr[:left][:name]]
-      right_contains = expr[:right][:type] == :column && alias_mapping[expr[:right][:name]]
-      left_contains || right_contains || 
-        contains_alias_in_expression?(expr[:left], alias_mapping) || 
-        contains_alias_in_expression?(expr[:right], alias_mapping)
-    when :unary_op
-      operand_contains = expr[:operand][:type] == :column && alias_mapping[expr[:operand][:name]]
-      operand_contains || contains_alias_in_expression?(expr[:operand], alias_mapping)
-    when :function
-      expr[:arguments].any? do |arg|
-        (arg[:type] == :column && alias_mapping[arg[:name]]) ||
-        contains_alias_in_expression?(arg, alias_mapping)
-      end
-    else
-      false
-    end
-  end
-  
   def validate_expression_with_aggregates(expr, dummy_row_data)
     case expr[:type]
     when :aggregate_function
@@ -345,18 +317,6 @@ class SqlValidator
       expr[:args]&.each { |arg| validate_expression_with_aggregates(arg, dummy_row_data) }
     else
       @evaluator.validate_types(expr, dummy_row_data)
-    end
-  end
-  
-  def validate_group_by_expression_with_context(select_expr, group_by_expr, table_context)
-    validation_context = ValidationContext.new(table_context, @evaluator, self)
-    
-    if select_expr[:type] == :aggregate_function
-      validate_aggregate_expression_with_context(select_expr, table_context)
-    elsif contains_aggregate_function?(select_expr)
-      validate_aggregate_expression_with_context(select_expr, table_context)
-    else
-      validate_non_aggregate_in_group_by_context(select_expr, group_by_expr, table_context)
     end
   end
   
@@ -393,29 +353,5 @@ class SqlValidator
     else
       validate_columns_in_context(expr, table_context)
     end
-  end
-  
-  def validate_non_aggregate_in_group_by_context(expr, group_by_expr, table_context)
-    # First check if the entire expression matches the GROUP BY expression
-    return if expressions_equal_in_context?(expr, group_by_expr)
-    
-    # Extract columns from the expression
-    columns = @expression_matcher.extract_columns_from_expression(expr)
-    
-    # Check each column is in GROUP BY
-    columns.each do |col|
-      unless column_in_group_by_context?(col, group_by_expr)
-        raise ExpressionEvaluator::ValidationError, "Column not in GROUP BY: #{col[:name] || col[:column]}"
-      end
-    end
-  end
-  
-  def expressions_equal_in_context?(expr1, expr2)
-    @expression_matcher.expressions_equal?(expr1, expr2)
-  end
-  
-  def column_in_group_by_context?(column, group_by_expr)
-    @expression_matcher.expressions_equal?(column, group_by_expr) ||
-    @expression_matcher.expression_contains_column?(group_by_expr, column)
   end
 end

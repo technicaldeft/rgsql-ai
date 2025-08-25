@@ -71,15 +71,6 @@ class AggregateEvaluator
     end
   end
   
-  def get_aggregate_type(expression, row_data = {})
-    case expression[:type]
-    when :aggregate_function
-      get_aggregate_function_type(expression, row_data)
-    else
-      @evaluator.get_expression_type(expression, row_data)
-    end
-  end
-  
   private
   
   def evaluate_expression_with_aggregates(expression, group_rows)

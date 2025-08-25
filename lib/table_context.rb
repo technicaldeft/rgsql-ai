@@ -33,38 +33,6 @@ class TableContext
     @aliases.key?(name_or_alias)
   end
   
-  def find_column(column_name)
-    matching_tables = []
-    
-    @aliases.each do |alias_name, table_name|
-      table_info = @tables[table_name]
-      if table_info[:columns].any? { |col| col[:name] == column_name }
-        matching_tables << { alias: alias_name, table: table_name, info: table_info }
-      end
-    end
-    
-    matching_tables
-  end
-  
-  def validate_column(table_ref, column_name)
-    actual_table = @aliases[table_ref]
-    return false unless actual_table
-    
-    table_info = @tables[actual_table]
-    table_info[:columns].any? { |col| col[:name] == column_name }
-  end
-  
-  def column_type(table_ref, column_name)
-    actual_table = @aliases[table_ref] || table_ref
-    return nil unless actual_table
-    
-    table_info = @tables[actual_table]
-    return nil unless table_info
-    
-    col_info = table_info[:columns].find { |col| col[:name] == column_name }
-    col_info ? col_info[:type].downcase.to_sym : nil
-  end
-  
   def build_dummy_row_data
     dummy_data = {}
     
@@ -84,12 +52,5 @@ class TableContext
   
   def to_hash
     { tables: @tables, aliases: @aliases }
-  end
-  
-  def self.from_hash(hash)
-    context = new
-    context.instance_variable_set(:@tables, hash[:tables])
-    context.instance_variable_set(:@aliases, hash[:aliases])
-    context
   end
 end

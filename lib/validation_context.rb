@@ -159,29 +159,6 @@ class ValidationContext
     { error: 'validation_error', message: e.message }
   end
   
-  def validate_row_values(values, columns)
-    values.each_with_index do |value, idx|
-      column = columns[idx]
-      next unless column
-      next if value.nil?
-      
-      case column[:type]
-      when 'INTEGER'
-        unless value.is_a?(Integer)
-          raise ExpressionEvaluator::ValidationError, "Type mismatch: expected INTEGER"
-        end
-      when 'BOOLEAN'
-        unless [true, false].include?(value)
-          raise ExpressionEvaluator::ValidationError, "Type mismatch: expected BOOLEAN"
-        end
-      end
-    end
-    
-    nil
-  rescue ExpressionEvaluator::ValidationError => e
-    { error: 'validation_error', message: e.message }
-  end
-  
   def has_aggregate_functions?(expression)
     @aggregate_evaluator.has_aggregate_functions?(expression)
   end

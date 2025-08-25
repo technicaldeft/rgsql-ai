@@ -225,21 +225,7 @@ class SqlExecutor
   def extract_row_data(row_context, table_info)
     @row_context_builder.extract_row_data(row_context, table_info)
   end
-  
-  def evaluate_select_expressions(expressions, row_data)
-    expressions.map do |expr_info|
-      value = @evaluator.evaluate(expr_info[:expression], row_data)
-      BooleanConverter.convert(value)
-    end
-  end
-  
-  def evaluate_select_expressions_with_context(expressions, row_context, table_context)
-    expressions.map do |expr_info|
-      value = @evaluator.evaluate_with_context(expr_info[:expression], row_context, table_context)
-      BooleanConverter.convert(value)
-    end
-  end
-  
+
   def apply_ordering(filtered_rows, order_by, alias_mapping, table_context, joins)
     if joins.empty?
       table_info = table_context.primary_table_info
@@ -413,62 +399,6 @@ class SqlExecutor
     end
     
     row_contexts
-  end
-  
-  def validate_join_query(parsed_sql, table_context, alias_mapping)
-    # Validate all expressions can be resolved
-    parsed_sql[:expressions].each do |expr_info|
-      validation = @validator.validate_expression_with_context(expr_info[:expression], table_context.to_hash)
-      return validation if has_error?(validation)
-    end
-    
-    # Validate WHERE clause if present
-    if parsed_sql[:where]
-      validation = @validator.validate_expression_with_context(parsed_sql[:where], table_context.to_hash)
-      return validation if has_error?(validation)
-    end
-    
-    # Validate ORDER BY if present
-    if parsed_sql[:order_by]
-      # Check if it's an alias reference first
-      order_expr = parsed_sql[:order_by][:expression]
-      if order_expr[:type] == :column && alias_mapping[order_expr[:name]]
-        # Validate the aliased expression instead
-        validation = @validator.validate_expression_with_context(alias_mapping[order_expr[:name]], table_context.to_hash)
-      else
-        validation = @validator.validate_expression_with_context(order_expr, table_context.to_hash)
-      end
-      return validation if has_error?(validation)
-    end
-    
-    # Validate JOIN conditions - these must check for boolean type
-    if parsed_sql[:joins]
-      parsed_sql[:joins].each do |join|
-        validation = @validator.validate_expression_with_context(join[:on], table_context.to_hash)
-        return validation if has_error?(validation)
-        
-        # Check that JOIN condition evaluates to boolean
-        join_type = @validator.get_expression_type_with_context(join[:on], table_context.to_hash)
-        unless join_type == :boolean || join_type.nil?
-          return validation_error
-        end
-      end
-    end
-    
-    # Validate LIMIT and OFFSET  
-    if parsed_sql[:limit]
-      unless @validator.validate_limit_offset_expression(parsed_sql[:limit])
-        return validation_error
-      end
-    end
-    
-    if parsed_sql[:offset]
-      unless @validator.validate_limit_offset_expression(parsed_sql[:offset])
-        return validation_error
-      end
-    end
-    
-    nil  # Return nil for success
   end
   
   def execute_create_table(parsed_sql)
