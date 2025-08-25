@@ -10,6 +10,7 @@ require_relative 'query_planner'
 require_relative 'row_context_builder'
 require_relative 'group_by_processor'
 require_relative 'query_processor'
+require_relative 'table_context'
 
 class SqlExecutor
   include ErrorHandler
@@ -148,11 +149,10 @@ class SqlExecutor
       query_processor = select_query_processor(joins)
       
       if joins.empty?
-        table_name = parsed_sql[:table_name]
-        dummy_row_data = build_dummy_row_data(table_context[:tables][table_name])
-        query_processor.validate_query(parsed_sql, table_context, alias_mapping, dummy_row_data)
+        dummy_row_data = table_context.build_dummy_row_data
+        query_processor.validate_query(parsed_sql, table_context.to_hash, alias_mapping, dummy_row_data)
       else
-        query_processor.validate_query(parsed_sql, table_context, alias_mapping, nil)
+        query_processor.validate_query(parsed_sql, table_context.to_hash, alias_mapping, nil)
       end
     rescue ExpressionEvaluator::ValidationError
       validation_error
@@ -160,20 +160,6 @@ class SqlExecutor
   end
   
   
-  def build_dummy_row_data(table_info)
-    dummy_row_data = {}
-    table_info[:columns].each do |col|
-      dummy_row_data[col[:name]] = case col[:type]
-      when 'INTEGER'
-        0
-      when 'BOOLEAN'
-        false
-      else
-        nil
-      end
-    end
-    dummy_row_data
-  end
   
   def process_rows(parsed_sql, row_contexts, table_context, alias_mapping)
     expressions = parsed_sql[:expressions]
@@ -189,10 +175,10 @@ class SqlExecutor
       
       # Handle GROUP BY if present
       if group_by
-        result_rows = query_processor.process_grouped_rows(row_contexts, expressions, where_clause, group_by, table_context)
+        result_rows = query_processor.process_grouped_rows(row_contexts, expressions, where_clause, group_by, table_context.to_hash)
       else
         # Filter and evaluate rows
-        filtered_rows = query_processor.process_rows(row_contexts, expressions, where_clause, table_context)
+        filtered_rows = query_processor.process_rows(row_contexts, expressions, where_clause, table_context.to_hash)
         
         # Apply ORDER BY
         if order_by
@@ -238,10 +224,10 @@ class SqlExecutor
   
   def apply_ordering(filtered_rows, order_by, alias_mapping, table_context, joins)
     if joins.empty?
-      table_info = table_context[:tables].values.first
+      table_info = table_context.primary_table_info
       @row_sorter.sort_rows(filtered_rows, order_by, alias_mapping, table_info[:columns])
     else
-      @row_sorter.sort_rows_with_context(filtered_rows, order_by, alias_mapping, table_context)
+      @row_sorter.sort_rows_with_context(filtered_rows, order_by, alias_mapping, table_context.to_hash)
     end
   end
   
@@ -257,21 +243,16 @@ class SqlExecutor
   private
   
   def build_table_context(from_table, from_alias, joins)
-    context = {
-      tables: {},
-      aliases: {}
-    }
+    context = TableContext.new
     
     # Add FROM table
     table_info = @table_manager.get_table_info(from_table)
     return validation_error unless table_info
     
-    actual_alias = from_alias || from_table
-    context[:tables][from_table] = table_info
-    context[:aliases][actual_alias] = from_table
+    context.add_table(from_table, table_info, from_alias)
     
     # Check for duplicate table names
-    seen_aliases = Set.new([actual_alias])
+    seen_aliases = Set.new([from_alias || from_table])
     
     # Add JOIN tables
     joins.each do |join|
@@ -286,8 +267,7 @@ class SqlExecutor
       end
       
       seen_aliases.add(join_alias)
-      context[:tables][join[:table]] = join_table_info
-      context[:aliases][join_alias] = join[:table]
+      context.add_table(join[:table], join_table_info, join[:alias])
     end
     
     context
@@ -295,7 +275,7 @@ class SqlExecutor
   
   def execute_joins(from_table, from_alias, joins, table_context)
     # Get rows from FROM table
-    from_table_info = table_context[:tables][from_table]
+    from_table_info = table_context.get_table_info(from_table)
     from_data = @table_manager.get_all_rows(from_table)
     return from_data if has_error?(from_data)
     
@@ -314,7 +294,7 @@ class SqlExecutor
       join_condition = join[:on]
       
       # Get rows from joined table
-      join_table_info = table_context[:tables][join_table]
+      join_table_info = table_context.get_table_info(join_table)
       join_data = @table_manager.get_all_rows(join_table)
       return join_data if has_error?(join_data)
       
@@ -330,7 +310,7 @@ class SqlExecutor
           
           # Evaluate JOIN condition
           begin
-            condition_result = @evaluator.evaluate_with_context(join_condition, join_context, table_context)
+            condition_result = @evaluator.evaluate_with_context(join_condition, join_context, table_context.to_hash)
             
             if condition_result == true
               matched = true
@@ -362,7 +342,7 @@ class SqlExecutor
             join_context = @row_context_builder.build_join_context(left_context, join_row, join_table_info, join_table, join_alias)
             
             begin
-              condition_result = @evaluator.evaluate_with_context(join_condition, join_context, table_context)
+              condition_result = @evaluator.evaluate_with_context(join_condition, join_context, table_context.to_hash)
               if condition_result == true
                 matched = true
                 break
@@ -401,13 +381,13 @@ class SqlExecutor
   def validate_join_query(parsed_sql, table_context, alias_mapping)
     # Validate all expressions can be resolved
     parsed_sql[:expressions].each do |expr_info|
-      validation = @validator.validate_expression_with_context(expr_info[:expression], table_context)
+      validation = @validator.validate_expression_with_context(expr_info[:expression], table_context.to_hash)
       return validation if has_error?(validation)
     end
     
     # Validate WHERE clause if present
     if parsed_sql[:where]
-      validation = @validator.validate_expression_with_context(parsed_sql[:where], table_context)
+      validation = @validator.validate_expression_with_context(parsed_sql[:where], table_context.to_hash)
       return validation if has_error?(validation)
     end
     
@@ -417,9 +397,9 @@ class SqlExecutor
       order_expr = parsed_sql[:order_by][:expression]
       if order_expr[:type] == :column && alias_mapping[order_expr[:name]]
         # Validate the aliased expression instead
-        validation = @validator.validate_expression_with_context(alias_mapping[order_expr[:name]], table_context)
+        validation = @validator.validate_expression_with_context(alias_mapping[order_expr[:name]], table_context.to_hash)
       else
-        validation = @validator.validate_expression_with_context(order_expr, table_context)
+        validation = @validator.validate_expression_with_context(order_expr, table_context.to_hash)
       end
       return validation if has_error?(validation)
     end
@@ -427,11 +407,11 @@ class SqlExecutor
     # Validate JOIN conditions - these must check for boolean type
     if parsed_sql[:joins]
       parsed_sql[:joins].each do |join|
-        validation = @validator.validate_expression_with_context(join[:on], table_context)
+        validation = @validator.validate_expression_with_context(join[:on], table_context.to_hash)
         return validation if has_error?(validation)
         
         # Check that JOIN condition evaluates to boolean
-        join_type = @validator.get_expression_type_with_context(join[:on], table_context)
+        join_type = @validator.get_expression_type_with_context(join[:on], table_context.to_hash)
         unless join_type == :boolean || join_type.nil?
           return validation_error
         end
