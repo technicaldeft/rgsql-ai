@@ -1,9 +1,11 @@
 require_relative 'expression_evaluator'
 require_relative 'expression_visitor'
+require_relative 'aggregate_function_registry'
 
 class AggregateEvaluator
   def initialize(evaluator)
     @evaluator = evaluator
+    @registry = AggregateFunctionRegistry.instance
   end
   
   def has_aggregate_functions?(expression)
@@ -99,24 +101,36 @@ class AggregateEvaluator
   end
   
   def evaluate_aggregate_function(expression, group_rows)
-    case expression[:name]
+    function_name = expression[:name]
+    
+    unless @registry.exists?(function_name)
+      raise "Unknown aggregate function: #{function_name}"
+    end
+    
+    case function_name
     when :count
-      evaluate_count(expression[:args].first, group_rows)
+      evaluate_count(expression[:args]&.first, group_rows)
     when :sum
-      evaluate_sum(expression[:args].first, group_rows)
+      evaluate_sum(expression[:args]&.first, group_rows)
     else
-      raise "Unknown aggregate function: #{expression[:name]}"
+      raise "Aggregate function not implemented: #{function_name}"
     end
   end
   
   def evaluate_aggregate_function_with_context(expression, group_contexts, table_context)
-    case expression[:name]
+    function_name = expression[:name]
+    
+    unless @registry.exists?(function_name)
+      raise "Unknown aggregate function: #{function_name}"
+    end
+    
+    case function_name
     when :count
-      evaluate_count_with_context(expression[:args].first, group_contexts, table_context)
+      evaluate_count_with_context(expression[:args]&.first, group_contexts, table_context)
     when :sum
-      evaluate_sum_with_context(expression[:args].first, group_contexts, table_context)
+      evaluate_sum_with_context(expression[:args]&.first, group_contexts, table_context)
     else
-      raise "Unknown aggregate function: #{expression[:name]}"
+      raise "Aggregate function not implemented: #{function_name}"
     end
   end
   
@@ -189,38 +203,43 @@ class AggregateEvaluator
   end
   
   def validate_aggregate_function_types(expression, row_data)
-    case expression[:name]
-    when :count
-      # COUNT can accept any type or no argument
-      if expression[:args].first
-        @evaluator.validate_types(expression[:args].first, row_data)
-      end
-      nil
-    when :sum
-      # SUM requires an integer argument
-      if expression[:args].first
-        arg_type = @evaluator.get_expression_type(expression[:args].first, row_data)
-        if arg_type != :integer
-          raise ExpressionEvaluator::ValidationError, "SUM requires integer argument"
-        end
-      else
-        raise ExpressionEvaluator::ValidationError, "SUM requires an argument"
-      end
-      nil
-    else
-      raise ExpressionEvaluator::ValidationError, "Unknown aggregate function: #{expression[:name]}"
+    function_name = expression[:name]
+    function = @registry.get(function_name)
+    
+    unless function
+      raise ExpressionEvaluator::ValidationError, "Unknown aggregate function: #{function_name}"
     end
+    
+    arg = expression[:args]&.first
+    
+    if function.requires_argument && arg.nil?
+      raise ExpressionEvaluator::ValidationError, "#{function_name.upcase} requires an argument"
+    end
+    
+    if arg
+      @evaluator.validate_types(arg, row_data)
+      
+      # Check argument type if function has specific requirements
+      if function.argument_type
+        arg_type = @evaluator.get_expression_type(arg, row_data)
+        unless arg_type == function.argument_type
+          raise ExpressionEvaluator::ValidationError, 
+                "#{function_name.upcase} requires #{function.argument_type} argument"
+        end
+      end
+    end
+    
+    nil
   end
   
   def get_aggregate_function_type(expression, row_data)
-    case expression[:name]
-    when :count
-      :integer
-    when :sum
-      :integer
-    else
+    function = @registry.get(expression[:name])
+    
+    unless function
       raise ExpressionEvaluator::ValidationError, "Unknown aggregate function: #{expression[:name]}"
     end
+    
+    function.return_type
   end
   
   def apply_binary_op(operator, left, right)
