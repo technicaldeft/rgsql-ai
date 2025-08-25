@@ -9,6 +9,7 @@ require_relative 'row_sorter'
 require_relative 'query_planner'
 require_relative 'row_context_builder'
 require_relative 'group_by_processor'
+require_relative 'query_processor'
 
 class SqlExecutor
   include ErrorHandler
@@ -21,6 +22,8 @@ class SqlExecutor
     @query_planner = QueryPlanner.new(@validator, @evaluator)
     @row_context_builder = RowContextBuilder.new
     @group_by_processor = GroupByProcessor.new(@evaluator)
+    @simple_query_processor = SimpleQueryProcessor.new(@evaluator, @row_processor, @validator, @group_by_processor)
+    @join_query_processor = JoinQueryProcessor.new(@evaluator, @row_processor, @validator, @group_by_processor)
   end
   
   def execute(parsed_sql)
@@ -142,80 +145,20 @@ class SqlExecutor
     joins = parsed_sql[:joins] || []
     
     begin
+      query_processor = select_query_processor(joins)
+      
       if joins.empty?
-        validate_simple_query(parsed_sql, table_context, alias_mapping)
+        table_name = parsed_sql[:table_name]
+        dummy_row_data = build_dummy_row_data(table_context[:tables][table_name])
+        query_processor.validate_query(parsed_sql, table_context, alias_mapping, dummy_row_data)
       else
-        validate_join_query(parsed_sql, table_context, alias_mapping)
+        query_processor.validate_query(parsed_sql, table_context, alias_mapping, nil)
       end
     rescue ExpressionEvaluator::ValidationError
       validation_error
     end
   end
   
-  def validate_simple_query(parsed_sql, table_context, alias_mapping)
-    table_name = parsed_sql[:table_name]
-    expressions = parsed_sql[:expressions]
-    where_clause = parsed_sql[:where]
-    group_by = parsed_sql[:group_by]
-    order_by = parsed_sql[:order_by]
-    limit = parsed_sql[:limit]
-    offset = parsed_sql[:offset]
-    
-    # Build dummy row for validation
-    dummy_row_data = build_dummy_row_data(table_context[:tables][table_name])
-    
-    # Validate GROUP BY clause first
-    if group_by
-      @evaluator.validate_types(group_by, dummy_row_data)
-      
-      # Validate that SELECT expressions are valid with GROUP BY
-      # (will implement more complex validation later)
-      expressions.each do |expr_info|
-        @validator.validate_group_by_expression(expr_info[:expression], group_by, dummy_row_data) if group_by
-      end
-    else
-      # Validate SELECT expressions normally
-      expressions.each do |expr_info|
-        @validator.validate_qualified_columns(expr_info[:expression], table_name)
-        @evaluator.validate_types(expr_info[:expression], dummy_row_data)
-      end
-    end
-    
-    # Validate WHERE clause
-    if where_clause
-      @evaluator.validate_types(where_clause, dummy_row_data)
-      where_type = @evaluator.get_expression_type(where_clause, dummy_row_data)
-      unless where_type == :boolean || where_type.nil?
-        return validation_error
-      end
-    end
-    
-    # Validate ORDER BY
-    if order_by
-      validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
-    end
-    
-    # Validate LIMIT and OFFSET
-    if limit && !@validator.validate_limit_offset_expression(limit)
-      return validation_error
-    end
-    
-    if offset && !@validator.validate_limit_offset_expression(offset)
-      return validation_error
-    end
-    
-    nil # No errors
-  end
-  
-  def validate_order_by_expression(order_by, alias_mapping, dummy_row_data)
-    order_expr = order_by[:expression]
-    if order_expr[:type] == :column && alias_mapping[order_expr[:name]]
-      # Validate the aliased expression instead
-      @evaluator.validate_types(alias_mapping[order_expr[:name]], dummy_row_data)
-    else
-      @evaluator.validate_types(order_expr, dummy_row_data)
-    end
-  end
   
   def build_dummy_row_data(table_info)
     dummy_row_data = {}
@@ -233,7 +176,6 @@ class SqlExecutor
   end
   
   def process_rows(parsed_sql, row_contexts, table_context, alias_mapping)
-    table_name = parsed_sql[:table_name]
     expressions = parsed_sql[:expressions]
     where_clause = parsed_sql[:where]
     group_by = parsed_sql[:group_by]
@@ -243,16 +185,14 @@ class SqlExecutor
     joins = parsed_sql[:joins] || []
     
     begin
+      query_processor = select_query_processor(joins)
+      
       # Handle GROUP BY if present
       if group_by
-        result_rows = process_grouped_rows(row_contexts, expressions, where_clause, group_by, table_context, joins)
+        result_rows = query_processor.process_grouped_rows(row_contexts, expressions, where_clause, group_by, table_context)
       else
         # Filter and evaluate rows
-        filtered_rows = if joins.empty?
-          process_simple_rows(row_contexts, expressions, where_clause, table_context[:tables][table_name])
-        else
-          process_join_rows(row_contexts, expressions, where_clause, table_context)
-        end
+        filtered_rows = query_processor.process_rows(row_contexts, expressions, where_clause, table_context)
         
         # Apply ORDER BY
         if order_by
@@ -276,116 +216,7 @@ class SqlExecutor
     end
   end
   
-  def process_grouped_rows(row_contexts, expressions, where_clause, group_by, table_context, joins)
-    # Get the first table name from the context
-    table_name = table_context[:tables].keys.first
-    
-    # First apply WHERE filter
-    filtered_contexts = if where_clause
-      row_contexts.select do |row_context|
-        if joins.empty?
-          row_data = extract_row_data(row_context, table_context[:tables][table_name])
-          @evaluator.evaluate(where_clause, row_data) == true
-        else
-          @evaluator.evaluate_with_context(where_clause, row_context, table_context) == true
-        end
-      end
-    else
-      row_contexts
-    end
-    
-    # Group the filtered rows
-    if joins.empty?
-      # For simple queries, convert row contexts to row data first
-      rows_data = filtered_contexts.map do |row_context|
-        extract_row_data(row_context, table_context[:tables][table_name])
-      end
-      
-      # If there are no rows, return empty result
-      return [] if rows_data.empty?
-      
-      # Group by the GROUP BY expression
-      grouped_rows = @group_by_processor.group_rows(rows_data, group_by, table_context)
-      
-      # For each group, evaluate the SELECT expressions on the first row
-      result_rows = grouped_rows.map do |group|
-        # Take the first row of the group as the representative
-        representative_row = group.first
-        evaluate_select_expressions(expressions, representative_row)
-      end
-    else
-      # For JOIN queries, return empty if no rows
-      return [] if filtered_contexts.empty?
-      
-      # Group the row contexts directly
-      grouped_contexts = group_join_contexts(filtered_contexts, group_by, table_context)
-      
-      # For each group, evaluate the SELECT expressions on the first row context
-      result_rows = grouped_contexts.map do |group|
-        representative_context = group.first
-        evaluate_select_expressions_with_context(expressions, representative_context, table_context)
-      end
-    end
-    
-    result_rows
-  end
   
-  def group_join_contexts(row_contexts, group_by_expr, table_context)
-    groups = {}
-    
-    row_contexts.each do |row_context|
-      # Evaluate the GROUP BY expression for this row context
-      group_key = @evaluator.evaluate_with_context(group_by_expr, row_context, table_context)
-      
-      # Handle NULL values in group key
-      group_key = group_key.nil? ? :null_group : group_key
-      
-      # Add row context to appropriate group
-      groups[group_key] ||= []
-      groups[group_key] << row_context
-    end
-    
-    groups.values
-  end
-  
-  def process_simple_rows(row_contexts, expressions, where_clause, table_info)
-    filtered_rows = []
-    
-    row_contexts.each do |row_context|
-      # Convert row_context to simple row_data
-      row_data = extract_row_data(row_context, table_info)
-      
-      # Apply WHERE filter
-      if where_clause
-        where_result = @evaluator.evaluate(where_clause, row_data)
-        next unless where_result == true
-      end
-      
-      # Evaluate SELECT expressions
-      result_row = evaluate_select_expressions(expressions, row_data)
-      filtered_rows << { result: result_row, row_data: row_data }
-    end
-    
-    filtered_rows
-  end
-  
-  def process_join_rows(row_contexts, expressions, where_clause, table_context)
-    filtered_rows = []
-    
-    row_contexts.each do |row_context|
-      # Apply WHERE filter
-      if where_clause
-        where_result = @evaluator.evaluate_with_context(where_clause, row_context, table_context)
-        next unless where_result == true
-      end
-      
-      # Evaluate SELECT expressions
-      result_row = evaluate_select_expressions_with_context(expressions, row_context, table_context)
-      filtered_rows << { result: result_row, context: row_context }
-    end
-    
-    filtered_rows
-  end
   
   def extract_row_data(row_context, table_info)
     @row_context_builder.extract_row_data(row_context, table_info)
@@ -417,6 +248,10 @@ class SqlExecutor
   def build_query_result(result_rows, parsed_sql)
     column_names = @query_planner.extract_column_names(parsed_sql[:expressions])
     { rows: result_rows, columns: column_names }
+  end
+  
+  def select_query_processor(joins)
+    joins.empty? ? @simple_query_processor : @join_query_processor
   end
   
   private
