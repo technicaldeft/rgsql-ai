@@ -1,4 +1,5 @@
 require_relative 'expression_evaluator'
+require_relative 'expression_visitor'
 
 class AggregateEvaluator
   def initialize(evaluator)
@@ -6,24 +7,15 @@ class AggregateEvaluator
   end
   
   def has_aggregate_functions?(expression)
-    case expression[:type]
-    when :aggregate_function
-      true
-    when :binary_op
-      has_aggregate_functions?(expression[:left]) || has_aggregate_functions?(expression[:right])
-    when :unary_op
-      has_aggregate_functions?(expression[:operand])
-    when :function
-      expression[:args].any? { |arg| has_aggregate_functions?(arg) }
-    else
-      false
-    end
+    visitor = AggregateDetectorVisitor.new
+    visitor.visit(expression)
+    visitor.has_aggregates?
   end
   
   def has_nested_aggregate?(expression)
     return false unless expression[:type] == :aggregate_function
     
-    expression[:args].any? { |arg| has_aggregate_functions?(arg) }
+    expression[:args]&.any? { |arg| has_aggregate_functions?(arg) } || false
   end
   
   def evaluate_aggregate(expression, group_rows)

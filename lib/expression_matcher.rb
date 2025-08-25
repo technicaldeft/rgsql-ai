@@ -1,3 +1,5 @@
+require_relative 'expression_visitor'
+
 class ExpressionMatcher
   def expressions_equal?(expr1, expr2)
     return false unless expr1 && expr2
@@ -53,21 +55,9 @@ class ExpressionMatcher
   end
   
   def extract_columns_from_expression(expr)
-    columns = []
-    
-    case expr[:type]
-    when :column, :qualified_column
-      columns << expr
-    when :binary_op
-      columns.concat(extract_columns_from_expression(expr[:left])) if expr[:left]
-      columns.concat(extract_columns_from_expression(expr[:right])) if expr[:right]
-    when :unary_op
-      columns.concat(extract_columns_from_expression(expr[:operand])) if expr[:operand]
-    when :function
-      expr[:args].each { |arg| columns.concat(extract_columns_from_expression(arg)) } if expr[:args]
-    end
-    
-    columns
+    visitor = ColumnExtractorVisitor.new
+    visitor.visit(expr)
+    visitor.columns
   end
   
   def extract_columns_not_in_expression(expr, exclude_expr)
