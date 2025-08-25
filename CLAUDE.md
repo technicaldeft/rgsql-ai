@@ -76,6 +76,12 @@ The database implementation follows a modular architecture with clear separation
 
 ### Query Processing
 
+**QueryProcessor (`lib/query_processor.rb`)**
+- Abstract base class for query processing strategies
+- `SimpleQueryProcessor` - Handles single-table queries
+- `JoinQueryProcessor` - Handles queries with JOINs
+- Eliminates conditional branching based on query type
+
 **QueryPlanner (`lib/query_planner.rb`)**
 - Validates queries against table schemas
 - Builds column mappings and alias resolution
@@ -86,12 +92,24 @@ The database implementation follows a modular architecture with clear separation
 - Column existence validation
 - JOIN condition validation
 - Context-aware validation for multi-table queries
+- Delegates expression matching to ExpressionMatcher
+
+**ExpressionMatcher (`lib/expression_matcher.rb`)**
+- Expression equality checking with normalization
+- Subexpression detection and matching
+- Column extraction from expressions
+- Handles qualified/unqualified column matching
 
 **ExpressionEvaluator (`lib/expression_evaluator.rb`)**
 - Evaluates SQL expressions against row data
 - Type inference and validation
 - NULL handling and three-valued logic
 - Support for operators, functions, and column references
+
+**GroupByProcessor (`lib/group_by_processor.rb`)**
+- Groups rows based on GROUP BY expressions
+- Handles NULL values in grouping keys
+- Supports both simple and complex grouping expressions
 
 **RowProcessor (`lib/row_processor.rb`)**
 - Filters rows based on WHERE conditions
@@ -103,7 +121,18 @@ The database implementation follows a modular architecture with clear separation
 - Handles NULL ordering semantics
 - Supports alias references in ORDER BY
 
+**RowContextBuilder (`lib/row_context_builder.rb`)**
+- Builds row contexts for query processing
+- Handles single-table and join contexts
+- Manages row data extraction
+
 ### Supporting Modules
+
+**TableContext (`lib/table_context.rb`)**
+- Encapsulates table context data and operations
+- Provides semantic methods for context access
+- Manages table aliases and column resolution
+- Builds dummy row data for validation
 
 **BooleanConverter (`lib/boolean_converter.rb`)**
 - Converts Ruby boolean values to SQL TRUE/FALSE strings
@@ -125,10 +154,11 @@ The database implementation follows a modular architecture with clear separation
 
 1. **Separation of Concerns** - Each component has a single, well-defined responsibility
 2. **AST-based Processing** - SQL is parsed into an abstract syntax tree for evaluation
-3. **Context Objects** - Table and row contexts passed through evaluation pipeline
+3. **Context Objects** - Table and row contexts encapsulated in dedicated classes
 4. **Modular Parsers** - Specialized parsers for different SQL constructs
 5. **Validator Pattern** - Separate validation from execution logic
-6. **Strategy Pattern** - Different execution strategies for simple vs JOIN queries
+6. **Strategy Pattern** - Polymorphic query processors for different query types
+7. **Delegation Pattern** - Complex operations delegated to specialized helper classes
 
 ### Data Flow
 
