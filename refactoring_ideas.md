@@ -125,10 +125,77 @@ The three completed refactorings have significantly improved the codebase:
 4. **Reduced Complexity** - Less branching logic and clearer data flow
 5. **Better Maintainability** - Code is more modular and easier to understand
 
-## 📊 Priority for Future Work
+## 🔍 Insights from Aggregate Functions Implementation
 
-Based on upcoming features (aggregate functions), the highest priority future refactorings would be:
+The implementation of aggregate functions (COUNT and SUM) revealed several architectural patterns and potential improvements:
 
-1. **Validation Context** - Aggregate functions will add new validation requirements
-2. **Expression Normalization** - Will help with aggregate function validation
-3. **Query Planner Enhancement** - Aggregate functions may need different execution strategies
+### What Worked Well
+
+1. **Query Processor Polymorphism** - The separation between `SimpleQueryProcessor` and `JoinQueryProcessor` made it easy to add aggregate support to both query types independently.
+
+2. **Expression Type System** - Adding `:aggregate_function` as a new expression type integrated cleanly with the existing expression handling.
+
+3. **Dedicated Evaluator Pattern** - Creating `AggregateEvaluator` as a specialized evaluator worked well, following the pattern of `ExpressionEvaluator`.
+
+### New Refactoring Ideas from Implementation
+
+#### Aggregate Function Registry
+
+**Problem:** Aggregate functions are currently hardcoded in multiple places (parser, evaluator, validator).
+
+**Proposed Solution:** Create an `AggregateFunctionRegistry` that:
+- Defines available aggregate functions and their properties
+- Centralizes type requirements (e.g., SUM requires integer)
+- Provides a single source of truth for aggregate function behavior
+- Makes it easy to add new aggregate functions (MIN, MAX, AVG, etc.)
+
+**Expected Benefits:**
+- Easier to add new aggregate functions
+- Consistent validation across the codebase
+- Better separation of concerns
+
+#### Expression Visitor Pattern
+
+**Problem:** Many operations need to traverse expressions (validation, evaluation, aggregate detection), leading to similar recursive code patterns.
+
+**Proposed Solution:** Implement a visitor pattern for expressions:
+- `ExpressionVisitor` base class with methods for each expression type
+- Specialized visitors for different operations
+- Consistent traversal logic
+
+**Expected Benefits:**
+- Eliminate duplicate traversal code
+- Easier to add new operations on expressions
+- Clearer separation of traversal from operation logic
+
+#### Implicit Grouping as Explicit Concept
+
+**Problem:** Implicit grouping (aggregate without GROUP BY) is handled as a special case in multiple places.
+
+**Proposed Solution:** Make implicit grouping an explicit concept:
+- Create an `ImplicitGroupBy` marker or transform queries to have explicit single group
+- Unified handling of grouped and implicitly grouped queries
+- Clearer semantics in the code
+
+**Expected Benefits:**
+- Simpler execution logic
+- Fewer special cases
+- Better code clarity
+
+### Validation Complexity
+
+The aggregate function implementation significantly increased validation complexity:
+- Different validation rules for expressions with/without aggregates
+- Context-dependent validation (aggregates allowed in SELECT but not WHERE)
+- Interaction between GROUP BY and aggregate validation
+
+This reinforces the need for the **Validation Context** refactoring mentioned earlier.
+
+## 📊 Updated Priority for Future Work
+
+Based on the aggregate functions implementation experience:
+
+1. **Validation Context** - The validation logic has become complex enough to warrant extraction
+2. **Expression Visitor Pattern** - Would simplify many expression operations
+3. **Aggregate Function Registry** - Would make adding MIN, MAX, AVG much easier
+4. **Expression Normalization** - Still valuable for consistent expression handling
